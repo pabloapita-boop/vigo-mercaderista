@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Mi Ruta · VigoPets</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<meta name="theme-color" content="#1a1a1a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+:root {
+  --bg: #F2F2F7;
+  --card: #fff;
+  --border: #E5E5EA;
+  --text: #1a1a1a;
+  --muted: #8E8E93;
+  --dark: #1a1a1a;
+  --orange: #E8541A;
+  --purple: #5B2D8E;
+  --green: #34C759;
+  --red: #FF3B30;
+  --blue: #007AFF;
+}
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+/* HEADER */
+.header {
+  background: linear-gradient(135deg, #1a1a1a 0%, #2d1a3d 100%);
+  padding: 16px 20px 0;
+  position: sticky; top: 0; z-index: 100;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+}
+.header-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.header-logo { height: 36px; object-fit: contain; }
+.header-date { text-align: right; }
+.header-date-day { font-size: 13px; font-weight: 600; color: white; }
+.header-date-full { font-size: 11px; color: #aaa; margin-top: 1px; }
+
+/* WEEK TABS */
+.week-tabs { display: flex; gap: 0; overflow-x: auto; scrollbar-width: none; padding-bottom: 0; }
+.week-tabs::-webkit-scrollbar { display: none; }
+.week-tab {
+  flex-shrink: 0;
+  padding: 8px 14px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #aaa;
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
+  transition: all 0.15s;
+  text-align: center;
+  min-width: 52px;
+}
+.week-tab .tab-day { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+.week-tab .tab-date { font-size: 13px; font-weight: 600; margin-top: 1px; }
+.week-tab .tab-count { font-size: 10px; margin-top: 2px; }
+.week-tab.active { color: white; border-bottom-color: var(--orange); }
+.week-tab.today .tab-date { color: var(--orange); }
+.week-tab.done .tab-day::after { content: ' ✓'; color: var(--green); }
+
+/* PROGRESS */
+.progress-bar { background: white; padding: 10px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; }
+.progress-track { flex: 1; height: 6px; background: #E5E5EA; border-radius: 3px; }
+.progress-fill { height: 100%; background: linear-gradient(90deg, var(--orange), var(--purple)); border-radius: 3px; transition: width 0.4s ease; }
+.progress-text { font-size: 12px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+
+/* CONTENT */
+.pdv-list { padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+
+/* PDV CARD */
+.pdv-card { background: var(--card); border-radius: 16px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.07); transition: opacity 0.2s; }
+.pdv-card.completado .pdv-nombre { text-decoration: line-through; opacity: 0.6; }
+
+.pdv-header { padding: 14px 16px; display: flex; align-items: center; gap: 12px; cursor: pointer; }
+.pdv-num {
+  width: 34px; height: 34px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; font-weight: 700; color: white; flex-shrink: 0;
+  background: linear-gradient(135deg, var(--orange), var(--purple));
+}
+.pdv-num.done { background: var(--green); }
+.pdv-info { flex: 1; min-width: 0; }
+.pdv-nombre { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pdv-cadena { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.pdv-badges { display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap; }
+.mini-badge { font-size: 10px; padding: 2px 6px; border-radius: 6px; font-weight: 500; }
+.mini-badge-green { background: #D1FAE5; color: #065F46; }
+.mini-badge-blue { background: #DBEAFE; color: #1D4ED8; }
+.mini-badge-gray { background: #F3F4F6; color: #6B7280; }
+.chevron { font-size: 20px; color: #C7C7CC; transition: transform 0.2s; flex-shrink: 0; }
+.chevron.open { transform: rotate(90deg); }
+
+/* FORM */
+.pdv-form { border-top: 1px solid var(--border); padding: 16px; display: none; background: #FAFAFA; }
+.pdv-form.open { display: block; }
+
+.alert-box { border-radius: 10px; padding: 10px 14px; font-size: 12px; margin-bottom: 12px; display: flex; gap: 8px; align-items: flex-start; }
+.alert-yellow { background: #FFFBEB; color: #92400E; border: 1px solid #FDE68A; }
+.alert-blue { background: #EFF6FF; color: #1E40AF; border: 1px solid #BFDBFE; }
+
+.form-group { margin-bottom: 16px; }
+.form-group label { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; display: block; margin-bottom: 8px; }
+
+.seg-control { display: flex; background: #E5E5EA; border-radius: 10px; padding: 2px; gap: 2px; }
+.seg-btn { flex: 1; padding: 7px 8px; border: none; background: transparent; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; color: var(--muted); transition: all 0.15s; text-align: center; }
+.seg-btn.active { background: white; color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.1); font-weight: 600; }
+
+.yn-group { display: flex; gap: 8px; }
+.yn-btn { flex: 1; padding: 10px; border: 2px solid var(--border); border-radius: 12px; background: white; font-size: 14px; font-weight: 600; cursor: pointer; text-align: center; transition: all 0.15s; }
+.yn-btn.yes { border-color: var(--green); background: #D1FAE5; color: #065F46; }
+.yn-btn.no { border-color: var(--red); background: #FEE2E2; color: #991B1B; }
+
+textarea { width: 100%; padding: 10px 12px; border: 1.5px solid var(--border); border-radius: 10px; font-size: 14px; font-family: inherit; resize: none; min-height: 70px; background: white; }
+textarea:focus { outline: none; border-color: var(--orange); }
+
+/* PHOTOS */
+.photo-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.photo-thumb { width: 76px; height: 76px; border-radius: 12px; object-fit: cover; border: 1px solid var(--border); }
+.photo-add-btn { width: 76px; height: 76px; border-radius: 12px; border: 2px dashed #C7C7CC; background: white; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; gap: 4px; }
+.photo-add-btn span:first-child { font-size: 24px; }
+.photo-add-btn span:last-child { font-size: 10px; color: var(--muted); font-weight: 500; }
+
+/* SAVE BTN */
+.btn-save { width: 100%; padding: 15px; border: none; border-radius: 14px; font-size: 16px; font-weight: 700; cursor: pointer; margin-top: 8px; transition: all 0.2s; background: linear-gradient(135deg, var(--orange), var(--purple)); color: white; }
+.btn-save:active { transform: scale(0.98); }
+.btn-save.saved { background: var(--green); }
+.btn-save:disabled { opacity: 0.6; }
+
+/* EMPTY */
+.empty-day { text-align: center; padding: 50px 30px; }
+.empty-day .icon { font-size: 44px; margin-bottom: 16px; }
+.empty-day p { font-size: 14px; color: var(--muted); }
+
+/* LOADING */
+.loading-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 50vh; gap: 16px; }
+.spinner { width: 40px; height: 40px; border: 3px solid #E5E5EA; border-top-color: var(--orange); border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* TOAST */
+.toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%) translateY(20px); background: #1a1a1a; color: white; padding: 12px 24px; border-radius: 24px; font-size: 14px; font-weight: 500; opacity: 0; transition: all 0.3s; z-index: 999; white-space: nowrap; pointer-events: none; }
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+.bottom-space { height: 50px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-top">
+    <img src="logo-vigopets.png" alt="VigoPets" class="header-logo">
+    <div class="header-date">
+      <div class="header-date-day" id="hdr-dia"></div>
+      <div class="header-date-full" id="hdr-fecha"></div>
+    </div>
+  </div>
+  <div class="week-tabs" id="week-tabs"></div>
+</div>
+
+<div id="progress-section" style="display:none;">
+  <div class="progress-bar">
+    <div class="progress-track">
+      <div class="progress-fill" id="progress-fill" style="width:0%"></div>
+    </div>
+    <div class="progress-text" id="progress-text">0 / 0</div>
+  </div>
+</div>
+
+<div id="main-content">
+  <div class="loading-screen">
+    <div class="spinner"></div>
+    <p style="font-size:14px;color:var(--muted);">Cargando tu ruta...</p>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const SUPABASE_URL = 'https://ocwwomxgcvqugxmgekta.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9jd3dvbXhnY3ZxdWd4bWdla3RhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyOTY3MTksImV4cCI6MjA5Nzg3MjcxOX0.Z7RAIfLUOm3q_O2tGz8eszOlBzRRqNeTEq4SGDEq8GU';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const DIAS_ES = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+const DIAS_RUTA = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+const DIAS_CORTO = ['Lun','Mar','Mié','Jue','Vie','Sáb'];
+const COLORES = ['#185FA5','#0F6E56','#854F0B','#993556','#534AB7','#3B6D11'];
+
+let ruta = null;
+let rutaItemsPorDia = {};
+let visitasPorDia = {};
+let diaActivo = '';
+let todayStr = '';
+
+function hoy() {
+  return new Date().toISOString().split('T')[0];
+}
+
+function diaHoy() {
+  return DIAS_ES[new Date().getDay()];
+}
+
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+async function init() {
+  todayStr = hoy();
+  const diaDeHoy = diaHoy();
+
+  document.getElementById('hdr-dia').textContent = diaDeHoy;
+  document.getElementById('hdr-fecha').textContent = new Date().toLocaleDateString('es-PA', { day:'numeric', month:'long', year:'numeric' });
+
+  // Find this week's ruta
+  const { data: rutas } = await sb.from('rutas')
+    .select('*')
+    .lte('semana_inicio', todayStr)
+    .gte('semana_fin', todayStr)
+    .order('semana_inicio', { ascending: false })
+    .limit(1);
+
+  if (!rutas?.length) {
+    document.getElementById('main-content').innerHTML = `<div class="empty-day"><div class="icon">📋</div><p>No hay ruta programada para esta semana.</p></div>`;
+    return;
+  }
+
+  ruta = rutas[0];
+
+  // Load all items for this week
+  const { data: items } = await sb.from('ruta_items')
+    .select('*, pdv(*)')
+    .eq('ruta_id', ruta.id)
+    .order('orden');
+
+  DIAS_RUTA.forEach(d => { rutaItemsPorDia[d] = []; visitasPorDia[d] = {}; });
+  items?.forEach(item => {
+    if (rutaItemsPorDia[item.dia] !== undefined) rutaItemsPorDia[item.dia].push(item);
+  });
+
+  // Load visitas for this week
+  const fechaInicio = ruta.semana_inicio;
+  const fechaFin = ruta.semana_fin;
+  const { data: visitas } = await sb.from('visitas')
+    .select('*')
+    .gte('fecha', fechaInicio)
+    .lte('fecha', fechaFin);
+
+  visitas?.forEach(v => {
+    // Find which day this PDV belongs to
+    for (const dia of DIAS_RUTA) {
+      if (rutaItemsPorDia[dia].find(i => i.pdv_id === v.pdv_id)) {
+        visitasPorDia[dia][v.pdv_id] = v;
+        break;
+      }
+    }
+  });
+
+  // Set active tab to today (or Monday if weekend)
+  diaActivo = DIAS_RUTA.includes(diaDeHoy) ? diaDeHoy : 'Lunes';
+
+  renderTabs();
+  renderDia(diaActivo);
+}
+
+function renderTabs() {
+  const base = new Date(ruta.semana_inicio + 'T12:00:00');
+  const tabs = document.getElementById('week-tabs');
+  tabs.innerHTML = '';
+
+  DIAS_RUTA.forEach((dia, i) => {
+    const fecha = new Date(base);
+    fecha.setDate(base.getDate() + i);
+    const fechaStr = fecha.toISOString().split('T')[0];
+    const isToday = fechaStr === todayStr;
+    const items = rutaItemsPorDia[dia];
+    const completados = items.filter(item => visitasPorDia[dia][item.pdv_id]?.visitado).length;
+    const isDone = items.length > 0 && completados === items.length;
+
+    const tab = document.createElement('div');
+    tab.className = `week-tab${diaActivo === dia ? ' active' : ''}${isToday ? ' today' : ''}${isDone ? ' done' : ''}`;
+    tab.innerHTML = `
+      <div class="tab-day">${DIAS_CORTO[i]}${isDone ? ' ✓' : ''}</div>
+      <div class="tab-date">${fecha.getDate()}</div>
+      <div class="tab-count" style="color:${items.length ? (completados===items.length?'#34C759':'#aaa') : '#555'}">${items.length ? `${completados}/${items.length}` : '—'}</div>
+    `;
+    tab.onclick = () => { diaActivo = dia; renderTabs(); renderDia(dia); };
+    tabs.appendChild(tab);
+  });
+}
+
+function renderDia(dia) {
+  const items = rutaItemsPorDia[dia];
+  const visitas = visitasPorDia[dia];
+  const fechaBase = new Date(ruta.semana_inicio + 'T12:00:00');
+  const diaIdx = DIAS_RUTA.indexOf(dia);
+  fechaBase.setDate(fechaBase.getDate() + diaIdx);
+  const fechaDia = fechaBase.toISOString().split('T')[0];
+  const isToday = fechaDia === todayStr;
+  const color = COLORES[diaIdx];
+
+  const completados = items.filter(i => visitas[i.pdv_id]?.visitado).length;
+  const total = items.length;
+
+  if (total > 0) {
+    document.getElementById('progress-section').style.display = 'flex';
+    document.getElementById('progress-text').textContent = `${completados} / ${total}`;
+    document.getElementById('progress-fill').style.width = total ? Math.round(completados/total*100)+'%' : '0%';
+  } else {
+    document.getElementById('progress-section').style.display = 'none';
+  }
+
+  if (!items.length) {
+    document.getElementById('main-content').innerHTML = `<div class="empty-day"><div class="icon">🏖️</div><p>Sin visitas programadas para ${dia}.</p></div>`;
+    return;
+  }
+
+  const html = `
+    <div class="pdv-list">
+      ${items.map((item, idx) => renderCard(item, idx, visitas[item.pdv_id], color, isToday, fechaDia)).join('')}
+    </div>
+    <div class="bottom-space"></div>
+  `;
+  document.getElementById('main-content').innerHTML = html;
+}
+
+function renderCard(item, idx, visita, color, isToday, fechaDia) {
+  const pdv = item.pdv;
+  const done = visita?.visitado;
+
+  const badges = [];
+  if (visita?.oc_emitida) badges.push(`<span class="mini-badge mini-badge-blue">OC ✓</span>`);
+  if (visita?.tipo_visita === 'mercadeo_pedido') badges.push(`<span class="mini-badge mini-badge-green">Pedido</span>`);
+  if (visita?.mercancia_deposito) badges.push(`<span class="mini-badge mini-badge-gray">Dep. ✓</span>`);
+
+  return `
+    <div class="pdv-card ${done ? 'completado' : ''}" id="card-${pdv.id}">
+      <div class="pdv-header" onclick="toggleCard('${pdv.id}')">
+        <div class="pdv-num ${done ? 'done' : ''}" style="${done ? '' : `background:linear-gradient(135deg,${color},#5B2D8E)`}">${done ? '✓' : idx+1}</div>
+        <div class="pdv-info">
+          <div class="pdv-nombre">${pdv.nombre}</div>
+          <div class="pdv-cadena">${pdv.cadena}</div>
+          ${badges.length ? `<div class="pdv-badges">${badges.join('')}</div>` : ''}
+        </div>
+        <span class="chevron" id="chev-${pdv.id}">›</span>
+      </div>
+      <div class="pdv-form" id="form-${pdv.id}">
+        ${pdv.notas ? `<div class="alert-box alert-yellow">⚠️ <span>${pdv.notas}</span></div>` : ''}
+        ${pdv.horario_pedidos ? `<div class="alert-box alert-blue">🕐 <span>Pedidos: ${pdv.horario_pedidos}</span></div>` : ''}
+        ${pdv.horario_entrega ? `<div class="alert-box alert-blue">🚚 <span>Entrega: ${pdv.horario_entrega}</span></div>` : ''}
+
+        ${!isToday ? `<div class="alert-box alert-yellow">📅 <span>Solo puedes registrar visitas del día de hoy.</span></div>` : ''}
+
+        <div class="form-group">
+          <label>¿Visitado?</label>
+          <div class="yn-group">
+            <button class="yn-btn ${visita?.visitado === true ? 'yes' : ''}" onclick="setVal('${pdv.id}','visitado',true,'${fechaDia}')" ${!isToday?'disabled':''}>✓ Sí</button>
+            <button class="yn-btn ${visita?.visitado === false && visita ? 'no' : ''}" onclick="setVal('${pdv.id}','visitado',false,'${fechaDia}')" ${!isToday?'disabled':''}>✗ No pude</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Tipo de visita</label>
+          <div class="seg-control">
+            <button class="seg-btn ${visita?.tipo_visita === 'mercadeo' || !visita?.tipo_visita ? 'active' : ''}" onclick="setVal('${pdv.id}','tipo_visita','mercadeo','${fechaDia}')" ${!isToday?'disabled':''}>Solo mercadeo</button>
+            <button class="seg-btn ${visita?.tipo_visita === 'mercadeo_pedido' ? 'active' : ''}" onclick="setVal('${pdv.id}','tipo_visita','mercadeo_pedido','${fechaDia}')" ${!isToday?'disabled':''}>Mercadeo + pedido</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>¿OC emitida?</label>
+          <div class="yn-group">
+            <button class="yn-btn ${visita?.oc_emitida === true ? 'yes' : ''}" onclick="setVal('${pdv.id}','oc_emitida',true,'${fechaDia}')" ${!isToday?'disabled':''}>✓ Sí</button>
+            <button class="yn-btn ${visita?.oc_emitida === false && visita ? 'no' : ''}" onclick="setVal('${pdv.id}','oc_emitida',false,'${fechaDia}')" ${!isToday?'disabled':''}>✗ No</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>¿Mercancía en depósito?</label>
+          <div class="yn-group">
+            <button class="yn-btn ${visita?.mercancia_deposito === true ? 'yes' : ''}" onclick="setVal('${pdv.id}','mercancia_deposito',true,'${fechaDia}')" ${!isToday?'disabled':''}>✓ Sí</button>
+            <button class="yn-btn ${visita?.mercancia_deposito === false && visita ? 'no' : ''}" onclick="setVal('${pdv.id}','mercancia_deposito',false,'${fechaDia}')" ${!isToday?'disabled':''}>✗ No</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Fotos</label>
+          <div class="photo-grid" id="photos-${pdv.id}">
+            ${(visita?.fotos || []).map(url => `<img class="photo-thumb" src="${url}" onclick="window.open('${url}','_blank')">`).join('')}
+            ${isToday ? `
+            <label class="photo-add-btn" for="file-${pdv.id}">
+              <span>📷</span>
+              <span>Foto</span>
+            </label>
+            <input type="file" accept="image/*" capture="environment" style="display:none" id="file-${pdv.id}" onchange="subirFoto('${pdv.id}','${fechaDia}',this)">
+            ` : ''}
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Observaciones</label>
+          <textarea id="obs-${pdv.id}" placeholder="Estado del anaquel, incidencias..." ${!isToday?'disabled':''} onblur="setObs('${pdv.id}','${fechaDia}')">${visita?.observaciones || ''}</textarea>
+        </div>
+
+        ${isToday ? `<button class="btn-save ${done ? 'saved' : ''}" id="btn-${pdv.id}" onclick="guardar('${pdv.id}','${fechaDia}')">
+          ${done ? '✓ Guardado' : 'Guardar visita'}
+        </button>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function toggleCard(pdvId) {
+  const form = document.getElementById('form-' + pdvId);
+  const chev = document.getElementById('chev-' + pdvId);
+  const isOpen = form.classList.contains('open');
+  document.querySelectorAll('.pdv-form.open').forEach(f => f.classList.remove('open'));
+  document.querySelectorAll('.chevron.open').forEach(c => c.classList.remove('open'));
+  if (!isOpen) {
+    form.classList.add('open');
+    chev.classList.add('open');
+    setTimeout(() => form.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
+  }
+}
+
+function getLocal(pdvId, fechaDia) {
+  const dia = diaActivo;
+  if (!visitasPorDia[dia][pdvId]) visitasPorDia[dia][pdvId] = { pdv_id: pdvId, fecha: fechaDia, ruta_id: ruta.id, tipo_visita: 'mercadeo' };
+  return visitasPorDia[dia][pdvId];
+}
+
+function setVal(pdvId, key, val, fechaDia) {
+  getLocal(pdvId, fechaDia)[key] = val;
+  // Update button states visually
+  const form = document.getElementById('form-' + pdvId);
+  if (!form) return;
+  if (key === 'visitado') {
+    form.querySelectorAll('.yn-group')[0]?.querySelectorAll('.yn-btn').forEach((b,i) => {
+      b.className = 'yn-btn' + (i===0&&val===true?' yes':i===1&&val===false?' no':'');
+    });
+  } else if (key === 'oc_emitida') {
+    form.querySelectorAll('.yn-group')[1]?.querySelectorAll('.yn-btn').forEach((b,i) => {
+      b.className = 'yn-btn' + (i===0&&val===true?' yes':i===1&&val===false?' no':'');
+    });
+  } else if (key === 'mercancia_deposito') {
+    form.querySelectorAll('.yn-group')[2]?.querySelectorAll('.yn-btn').forEach((b,i) => {
+      b.className = 'yn-btn' + (i===0&&val===true?' yes':i===1&&val===false?' no':'');
+    });
+  } else if (key === 'tipo_visita') {
+    form.querySelectorAll('.seg-btn').forEach((b,i) => {
+      b.className = 'seg-btn' + ((i===0&&val==='mercadeo')||(i===1&&val==='mercadeo_pedido')?' active':'');
+    });
+  }
+}
+
+function setObs(pdvId, fechaDia) {
+  getLocal(pdvId, fechaDia).observaciones = document.getElementById('obs-' + pdvId).value;
+}
+
+async function subirFoto(pdvId, fechaDia, input) {
+  const file = input.files[0];
+  if (!file) return;
+  const area = document.getElementById('photos-' + pdvId);
+  const loading = document.createElement('span');
+  loading.textContent = '⏳';
+  loading.style.cssText = 'font-size:24px;align-self:center;';
+  area.insertBefore(loading, area.querySelector('label'));
+
+  const fileName = `${pdvId}/${Date.now()}.jpg`;
+  const { error } = await sb.storage.from('visita-fotos').upload(fileName, file, { upsert: true });
+  loading.remove();
+  if (error) { toast('Error al subir foto'); return; }
+
+  const { data: { publicUrl } } = sb.storage.from('visita-fotos').getPublicUrl(fileName);
+  const v = getLocal(pdvId, fechaDia);
+  if (!v.fotos) v.fotos = [];
+  v.fotos.push(publicUrl);
+
+  const img = document.createElement('img');
+  img.className = 'photo-thumb';
+  img.src = publicUrl;
+  img.onclick = () => window.open(publicUrl, '_blank');
+  area.insertBefore(img, area.querySelector('label'));
+  toast('Foto agregada ✓');
+  input.value = '';
+}
+
+async function guardar(pdvId, fechaDia) {
+  const btn = document.getElementById('btn-' + pdvId);
+  if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
+
+  const v = getLocal(pdvId, fechaDia);
+  v.observaciones = document.getElementById('obs-' + pdvId)?.value || '';
+
+  const data = {
+    pdv_id: pdvId, ruta_id: ruta.id, fecha: fechaDia,
+    visitado: v.visitado || false,
+    tipo_visita: v.tipo_visita || 'mercadeo',
+    oc_emitida: v.oc_emitida || false,
+    mercancia_deposito: v.mercancia_deposito || false,
+    observaciones: v.observaciones || null,
+    fotos: v.fotos || [],
+  };
+
+  let error, inserted;
+  if (v.id) {
+    ({ error } = await sb.from('visitas').update(data).eq('id', v.id));
+  } else {
+    ({ data: inserted, error } = await sb.from('visitas').insert(data).select().single());
+    if (inserted) visitasPorDia[diaActivo][pdvId] = { ...data, id: inserted.id };
+  }
+
+  if (error) { toast('Error: ' + error.message); if(btn){btn.disabled=false;btn.textContent='Guardar visita';} return; }
+
+  if (btn) { btn.classList.add('saved'); btn.textContent = '✓ Guardado'; btn.disabled = false; }
+
+  // Update card header
+  const card = document.getElementById('card-' + pdvId);
+  if (card && v.visitado) {
+    card.classList.add('completado');
+    const num = card.querySelector('.pdv-num');
+    if (num) { num.textContent = '✓'; num.className = 'pdv-num done'; }
+  }
+
+  // Update progress
+  const items = rutaItemsPorDia[diaActivo];
+  const completados = items.filter(i => visitasPorDia[diaActivo][i.pdv_id]?.visitado).length;
+  document.getElementById('progress-text').textContent = `${completados} / ${items.length}`;
+  document.getElementById('progress-fill').style.width = Math.round(completados/items.length*100)+'%';
+  renderTabs();
+  toast('Visita guardada ✓');
+}
+
+init();
+</script>
+</body>
+</html>
