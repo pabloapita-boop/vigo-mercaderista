@@ -337,7 +337,15 @@ tr:hover td { background: var(--bg); }
     <input type="hidden" id="p-id">
     <div class="form-row cols-2">
       <div><label>Nombre</label><input type="text" id="p-nombre"></div>
-      <div><label>Cadena</label><input type="text" id="p-cadena" placeholder="Ej: Geo. F. Novey"></div>
+      <div>
+        <label>Cadena</label>
+        <div style="display:flex; gap:6px;">
+          <select id="p-cadena" style="flex:1;">
+            <option value="">Seleccionar cadena...</option>
+          </select>
+          <button class="btn btn-outline btn-sm" onclick="agregarNuevaCadena()" style="white-space:nowrap;">+ Nueva</button>
+        </div>
+      </div>
     </div>
     <div class="form-row cols-2">
       <div><label>Zona</label><input type="text" id="p-zona" placeholder="Ej: Sur, Centro, Norte"></div>
@@ -373,6 +381,7 @@ const FECHAS_OFFSET = { Lunes:0, Martes:1, Miércoles:2, Jueves:3, Viernes:4, S�
 
 let state = { pool: [], days: { Lunes:[], Martes:[], Miércoles:[], Jueves:[], Viernes:[], Sábado:[] } };
 let allPDVs = [];
+let pdvMap = {}; // id -> pdv object for safe editing
 let drag = { item: null, from: null };
 let rutaActualId = null;
 
@@ -433,7 +442,7 @@ function getFechasDia() {
 
 async function cargarCadenas() {
   const { data } = await sb.from('pdv').select('cadena').eq('activo', true);
-  const cadenas = [...new Set(data?.map(d => d.cadena) || [])].sort();
+  const cadenas = [...new Set(data?.map(d => d.cadena).filter(Boolean) || [])].sort();
   ['filtro-cadena-ruta','filtro-cadena-v','filtro-cadena-c','filtro-cadena-p'].forEach(id => {
     const sel = document.getElementById(id);
     if (!sel) return;
@@ -442,6 +451,8 @@ async function cargarCadenas() {
     cadenas.forEach(c => { const o = new Option(c, c); sel.add(o); });
     sel.value = val;
   });
+  // Also populate PDV modal cadena select
+  poblarSelectCadenas(cadenas);
 }
 
 async function cargarPDVPool() {
@@ -450,6 +461,8 @@ async function cargarPDVPool() {
   if (cadena) q = q.eq('cadena', cadena);
   const { data } = await q;
   allPDVs = data || [];
+  pdvMap = {};
+  allPDVs.forEach(p => pdvMap[p.id] = p);
 
   // Only add to pool PDVs not already in days
   const assigned = Object.values(state.days).flat().map(p => p.id);
@@ -827,7 +840,7 @@ async function cargarPDVs() {
       <td>${p.requiere_oc ? '<span class="badge badge-green">Sí</span>' : '<span class="badge badge-gray">No</span>'}</td>
       <td style="max-width:150px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${p.notas || '—'}</td>
       <td style="white-space:nowrap;">
-        <button class="btn btn-sm btn-outline" onclick="editarPDV(${JSON.stringify(p).split('"').join("'")})">✏️</button>
+        <button class="btn btn-sm btn-outline" onclick="editarPDV('${p.id}')">✏️</button>
         <button class="btn btn-sm btn-danger" onclick="eliminarPDV('${p.id}')">×</button>
       </td>
     </tr>
@@ -835,15 +848,23 @@ async function cargarPDVs() {
 }
 
 function openModalPDV() {
-  ['p-id','p-nombre','p-cadena','p-zona','p-horpedidos','p-horentrega','p-notas'].forEach(id => document.getElementById(id).value = '');
+  ['p-id','p-nombre','p-zona','p-horpedidos','p-horentrega','p-notas'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('p-cadena').value = '';
   document.getElementById('p-oc').value = 'false';
   document.getElementById('modal-pdv').classList.add('open');
 }
 
-function editarPDV(p) {
+function editarPDV(id) {
+  const p = pdvMap[id];
+  if (!p) return;
   document.getElementById('p-id').value = p.id;
   document.getElementById('p-nombre').value = p.nombre;
-  document.getElementById('p-cadena').value = p.cadena;
+  // Add cadena to select if not there
+  const sel = document.getElementById('p-cadena');
+  let found = false;
+  for (let o of sel.options) { if (o.value === p.cadena) { found = true; break; } }
+  if (!found && p.cadena) { sel.add(new Option(p.cadena, p.cadena)); }
+  sel.value = p.cadena || '';
   document.getElementById('p-zona').value = p.zona || '';
   document.getElementById('p-oc').value = p.requiere_oc ? 'true' : 'false';
   document.getElementById('p-horpedidos').value = p.horario_pedidos || '';
@@ -877,7 +898,29 @@ async function eliminarPDV(id) {
   cargarPDVs();
 }
 
-function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+function agregarNuevaCadena() {
+  const nombre = prompt('Nombre de la nueva cadena:');
+  if (!nombre?.trim()) return;
+  const sel = document.getElementById('p-cadena');
+  // Check if already exists
+  for (let o of sel.options) { if (o.value === nombre.trim()) { sel.value = nombre.trim(); return; } }
+  const opt = new Option(nombre.trim(), nombre.trim());
+  sel.add(opt);
+  sel.value = nombre.trim();
+}
+
+function poblarSelectCadenas(cadenas, selectedValue = '') {
+  ['p-cadena'].forEach(id => {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    const current = sel.value || selectedValue;
+    sel.innerHTML = '<option value="">Seleccionar cadena...</option>';
+    cadenas.forEach(c => { const o = new Option(c, c); sel.add(o); });
+    if (current) sel.value = current;
+  });
+}
+
+
 
 document.querySelectorAll('.modal-bg').forEach(m => m.addEventListener('click', e => { if (e.target === m) m.classList.remove('open'); }));
 
