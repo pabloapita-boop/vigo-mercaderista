@@ -165,11 +165,6 @@ tr:hover td { background: var(--bg); }
       </div>
     </div>
 
-    <div class="add-row">
-      <input type="text" id="nuevo-pdv-pool" placeholder="Agregar PDV manualmente..." onkeydown="if(event.key==='Enter') agregarPDVManual()">
-      <button class="btn btn-outline btn-sm" onclick="agregarPDVManual()">+ Agregar</button>
-    </div>
-
     <div style="margin-bottom:8px; font-size:12px; color:var(--muted);">Sin asignar</div>
     <div class="pool-area" id="pool" ondragover="onPoolOver(event)" ondragleave="onPoolLeave()" ondrop="onPoolDrop(event)"></div>
 
@@ -874,9 +869,13 @@ function editarPDV(id) {
 }
 
 async function guardarPDV() {
+  const nombre = document.getElementById('p-nombre').value.trim();
+  const cadena = document.getElementById('p-cadena').value;
+  if (!nombre) { alert('El nombre es obligatorio.'); return; }
+  if (!cadena) { alert('Selecciona o crea una cadena.'); return; }
   const data = {
-    nombre: document.getElementById('p-nombre').value,
-    cadena: document.getElementById('p-cadena').value,
+    nombre,
+    cadena,
     zona: document.getElementById('p-zona').value || null,
     requiere_oc: document.getElementById('p-oc').value === 'true',
     horario_pedidos: document.getElementById('p-horpedidos').value || null,
@@ -884,8 +883,10 @@ async function guardarPDV() {
     notas: document.getElementById('p-notas').value || null,
   };
   const id = document.getElementById('p-id').value;
-  if (id) await sb.from('pdv').update(data).eq('id', id);
-  else await sb.from('pdv').insert(data);
+  let error;
+  if (id) { ({ error } = await sb.from('pdv').update(data).eq('id', id)); }
+  else { ({ error } = await sb.from('pdv').insert(data)); }
+  if (error) { alert('Error al guardar: ' + error.message); return; }
   closeModal('modal-pdv');
   await cargarPDVs();
   await cargarCadenas();
@@ -923,6 +924,7 @@ function poblarSelectCadenas(cadenas, selectedValue = '') {
 
 
 document.querySelectorAll('.modal-bg').forEach(m => m.addEventListener('click', e => { if (e.target === m) m.classList.remove('open'); }));
+document.querySelectorAll('.modal').forEach(m => m.addEventListener('click', e => e.stopPropagation()));
 
 init();
 </script>
