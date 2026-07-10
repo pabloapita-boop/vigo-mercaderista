@@ -480,7 +480,7 @@ tr:hover td { background: var(--bg); }
       <div>
         <label>Foto de referencia (opcional)</label>
         <div style="display:flex; align-items:center; gap:10px;">
-          <img id="prod-foto-preview" src="" style="width:56px; height:56px; border-radius:8px; object-fit:cover; background:var(--bg); display:none;">
+          <img id="prod-foto-preview" src="" style="width:56px; height:56px; border-radius:8px; object-fit:contain; background:var(--bg); border:1px solid var(--border); display:none;">
           <input type="file" accept="image/*" id="prod-foto-input" onchange="subirFotoProducto(this)">
         </div>
       </div>
@@ -1205,7 +1205,7 @@ async function cargarProductos() {
   else {
     tbody.innerHTML = productos.map(p => `
       <tr>
-        <td>${p.foto ? `<img src="${p.foto}" style="width:32px;height:32px;border-radius:6px;object-fit:cover;">` : ''}</td>
+        <td>${p.foto ? `<img src="${p.foto}" style="width:32px;height:32px;border-radius:6px;object-fit:contain;background:var(--bg);border:1px solid var(--border);">` : ''}</td>
         <td><strong>${p.nombre}</strong></td>
         <td>${p.categoria || '—'}</td>
         <td style="white-space:nowrap;">
