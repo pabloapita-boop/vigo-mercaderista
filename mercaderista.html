@@ -130,6 +130,12 @@ textarea:focus { outline: none; border-color: var(--orange); }
 .btn-save.saved { background: var(--green); }
 .btn-save:disabled { opacity: 0.6; }
 
+/* ENTREGA CARD */
+.entrega-card { border: 1.5px solid #FDBA74; }
+.entrega-num { background: linear-gradient(135deg, #EA580C, #9A3412) !important; }
+.mini-badge-entrega { background: #FFEDD5; color: #9A3412; }
+.btn-save.entrega-btn { background: linear-gradient(135deg, #EA580C, #9A3412); }
+
 /* EMPTY */
 .empty-day { text-align: center; padding: 50px 30px; }
 .empty-day .icon { font-size: 44px; margin-bottom: 16px; }
@@ -191,6 +197,7 @@ const COLORES = ['#185FA5','#0F6E56','#854F0B','#993556','#534AB7','#3B6D11'];
 let ruta = null;
 let rutaItemsPorDia = {};
 let visitasPorDia = {};
+let entregasPorDia = {};
 let diaActivo = '';
 let todayStr = '';
 
@@ -250,14 +257,37 @@ async function init() {
     .gte('fecha', fechaInicio)
     .lte('fecha', fechaFin);
 
+  const visitaIndex = {};
   visitas?.forEach(v => {
     // Find which day this PDV belongs to
     for (const dia of DIAS_RUTA) {
       if (rutaItemsPorDia[dia].find(i => i.pdv_id === v.pdv_id)) {
         visitasPorDia[dia][v.pdv_id] = v;
+        visitaIndex[v.id] = v;
         break;
       }
     }
+  });
+
+  // Link existing entregas to their visita (so re-saving updates instead of duplicating)
+  const visitaIds = Object.keys(visitaIndex);
+  if (visitaIds.length) {
+    const { data: entregasVinc } = await sb.from('entregas').select('id, visita_id').in('visita_id', visitaIds);
+    entregasVinc?.forEach(e => { if (visitaIndex[e.visita_id]) visitaIndex[e.visita_id].entrega_id = e.id; });
+  }
+
+  // Load pending (unconfirmed) entregas due this week, regardless of which day they were created
+  DIAS_RUTA.forEach(d => { entregasPorDia[d] = []; });
+  const { data: entregas } = await sb.from('entregas')
+    .select('*, pdv(*)')
+    .eq('confirmada', false)
+    .gte('fecha_entrega', fechaInicio)
+    .lte('fecha_entrega', fechaFin);
+
+  entregas?.forEach(e => {
+    const diffDias = Math.round((new Date(e.fecha_entrega + 'T12:00:00') - new Date(ruta.semana_inicio + 'T12:00:00')) / 86400000);
+    const dia = DIAS_RUTA[diffDias];
+    if (dia) entregasPorDia[dia].push(e);
   });
 
   // Set active tab to today (or Monday if weekend)
@@ -314,7 +344,9 @@ function renderDia(dia) {
     document.getElementById('progress-section').style.display = 'none';
   }
 
-  if (!items.length) {
+  const entregasDia = entregasPorDia[dia] || [];
+
+  if (!items.length && !entregasDia.length) {
     document.getElementById('main-content').innerHTML = `<div class="empty-day"><div class="icon">🏖️</div><p>Sin visitas programadas para ${dia}.</p></div>`;
     return;
   }
@@ -322,10 +354,52 @@ function renderDia(dia) {
   const html = `
     <div class="pdv-list">
       ${items.map((item, idx) => renderCard(item, idx, visitas[item.pdv_id], color, isToday, fechaDia)).join('')}
+      ${entregasDia.map(e => renderEntregaCard(e, isToday)).join('')}
     </div>
     <div class="bottom-space"></div>
   `;
   document.getElementById('main-content').innerHTML = html;
+}
+
+function renderEntregaCard(entrega, isToday) {
+  const pdv = entrega.pdv || {};
+  return `
+    <div class="pdv-card entrega-card" id="card-entrega-${entrega.id}">
+      <div class="pdv-header" onclick="toggleCard('entrega-${entrega.id}')">
+        <div class="pdv-num entrega-num">🚚</div>
+        <div class="pdv-info">
+          <div class="pdv-nombre">${pdv.nombre || '—'}</div>
+          <div class="pdv-cadena">${pdv.cadena || ''}</div>
+          <div class="pdv-badges"><span class="mini-badge mini-badge-entrega">🚚 Entrega comprometida · ${entrega.fecha_entrega}</span></div>
+        </div>
+        <span class="chevron" id="chev-entrega-${entrega.id}">›</span>
+      </div>
+      <div class="pdv-form" id="form-entrega-${entrega.id}">
+        ${!isToday ? `<div class="alert-box alert-yellow">📅 <span>Solo puedes confirmar entregas del día de hoy.</span></div>` : ''}
+
+        <div class="form-group">
+          <label>Fotos (opcional)</label>
+          <div class="photo-grid" id="photos-entrega-${entrega.id}">
+            ${entrega.foto ? `<img class="photo-thumb" src="${entrega.foto}" onclick="window.open('${entrega.foto}','_blank')">` : ''}
+            ${isToday ? `
+            <label class="photo-add-btn" for="file-entrega-${entrega.id}">
+              <span>📷</span>
+              <span>Foto</span>
+            </label>
+            <input type="file" accept="image/*" capture="environment" style="display:none" id="file-entrega-${entrega.id}" onchange="subirFotoEntrega('${entrega.id}',this)">
+            ` : ''}
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Observaciones</label>
+          <textarea id="obs-entrega-${entrega.id}" placeholder="Notas sobre la entrega..." ${!isToday?'disabled':''}>${entrega.observaciones || ''}</textarea>
+        </div>
+
+        ${isToday ? `<button class="btn-save entrega-btn" id="btn-entrega-${entrega.id}" onclick="confirmarEntrega('${entrega.id}')">Confirmar entrega</button>` : ''}
+      </div>
+    </div>
+  `;
 }
 
 function renderCard(item, idx, visita, color, isToday, fechaDia) {
@@ -377,6 +451,11 @@ function renderCard(item, idx, visita, color, isToday, fechaDia) {
             <button class="yn-btn ${visita?.oc_emitida === true ? 'yes' : ''}" onclick="setVal('${pdv.id}','oc_emitida',true,'${fechaDia}')" ${!isToday?'disabled':''}>✓ Sí</button>
             <button class="yn-btn ${visita?.oc_emitida === false && visita ? 'no' : ''}" onclick="setVal('${pdv.id}','oc_emitida',false,'${fechaDia}')" ${!isToday?'disabled':''}>✗ No</button>
           </div>
+        </div>
+
+        <div class="form-group" id="entrega-fecha-group-${pdv.id}" style="${visita?.oc_emitida ? '' : 'display:none;'}">
+          <label>Fecha de entrega comprometida</label>
+          <input type="date" id="fecha-entrega-${pdv.id}" value="${visita?.fecha_entrega || ''}" ${!isToday?'disabled':''} onchange="setFechaEntrega('${pdv.id}','${fechaDia}')">
         </div>
 
         <div class="form-group">
@@ -446,6 +525,8 @@ function setVal(pdvId, key, val, fechaDia) {
     form.querySelectorAll('.yn-group')[1]?.querySelectorAll('.yn-btn').forEach((b,i) => {
       b.className = 'yn-btn' + (i===0&&val===true?' yes':i===1&&val===false?' no':'');
     });
+    const group = document.getElementById('entrega-fecha-group-' + pdvId);
+    if (group) group.style.display = val ? '' : 'none';
   } else if (key === 'mercancia_deposito') {
     form.querySelectorAll('.yn-group')[2]?.querySelectorAll('.yn-btn').forEach((b,i) => {
       b.className = 'yn-btn' + (i===0&&val===true?' yes':i===1&&val===false?' no':'');
@@ -459,6 +540,10 @@ function setVal(pdvId, key, val, fechaDia) {
 
 function setObs(pdvId, fechaDia) {
   getLocal(pdvId, fechaDia).observaciones = document.getElementById('obs-' + pdvId).value;
+}
+
+function setFechaEntrega(pdvId, fechaDia) {
+  getLocal(pdvId, fechaDia).fecha_entrega = document.getElementById('fecha-entrega-' + pdvId).value || null;
 }
 
 async function subirFoto(pdvId, fechaDia, input) {
@@ -489,6 +574,54 @@ async function subirFoto(pdvId, fechaDia, input) {
   input.value = '';
 }
 
+async function subirFotoEntrega(entregaId, input) {
+  const file = input.files[0];
+  if (!file) return;
+  const area = document.getElementById('photos-entrega-' + entregaId);
+  const loading = document.createElement('span');
+  loading.textContent = '⏳';
+  loading.style.cssText = 'font-size:24px;align-self:center;';
+  area.insertBefore(loading, area.querySelector('label'));
+
+  const fileName = `entregas/${entregaId}/${Date.now()}.jpg`;
+  const { error } = await sb.storage.from('visita-fotos').upload(fileName, file, { upsert: true });
+  loading.remove();
+  if (error) { toast('Error al subir foto'); return; }
+
+  const { data: { publicUrl } } = sb.storage.from('visita-fotos').getPublicUrl(fileName);
+  const entrega = Object.values(entregasPorDia).flat().find(e => e.id === entregaId);
+  if (entrega) entrega.foto = publicUrl;
+
+  const img = document.createElement('img');
+  img.className = 'photo-thumb';
+  img.src = publicUrl;
+  img.onclick = () => window.open(publicUrl, '_blank');
+  area.insertBefore(img, area.querySelector('label'));
+  toast('Foto agregada ✓');
+  input.value = '';
+}
+
+async function confirmarEntrega(entregaId) {
+  const btn = document.getElementById('btn-entrega-' + entregaId);
+  if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
+
+  const entrega = Object.values(entregasPorDia).flat().find(e => e.id === entregaId);
+  const observaciones = document.getElementById('obs-entrega-' + entregaId)?.value || '';
+
+  const { error } = await sb.from('entregas').update({
+    confirmada: true,
+    observaciones: observaciones || null,
+    foto: entrega?.foto || null,
+  }).eq('id', entregaId);
+
+  if (error) { toast('Error: ' + error.message); if (btn) { btn.disabled = false; btn.textContent = 'Confirmar entrega'; } return; }
+
+  const card = document.getElementById('card-entrega-' + entregaId);
+  if (card) card.classList.add('completado');
+  if (btn) { btn.classList.add('saved'); btn.textContent = '✓ Entrega confirmada'; }
+  toast('Entrega confirmada ✓');
+}
+
 async function guardar(pdvId, fechaDia) {
   const btn = document.getElementById('btn-' + pdvId);
   if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
@@ -501,6 +634,7 @@ async function guardar(pdvId, fechaDia) {
     visitado: v.visitado || false,
     tipo_visita: v.tipo_visita || 'mercadeo',
     oc_emitida: v.oc_emitida || false,
+    fecha_entrega: v.oc_emitida ? (v.fecha_entrega || null) : null,
     mercancia_deposito: v.mercancia_deposito || false,
     observaciones: v.observaciones || null,
     fotos: v.fotos || [],
@@ -511,10 +645,20 @@ async function guardar(pdvId, fechaDia) {
     ({ error } = await sb.from('visitas').update(data).eq('id', v.id));
   } else {
     ({ data: inserted, error } = await sb.from('visitas').insert(data).select().single());
-    if (inserted) visitasPorDia[diaActivo][pdvId] = { ...data, id: inserted.id };
+    if (inserted) { v.id = inserted.id; visitasPorDia[diaActivo][pdvId] = { ...data, id: inserted.id, entrega_id: v.entrega_id }; }
   }
 
   if (error) { toast('Error: ' + error.message); if(btn){btn.disabled=false;btn.textContent='Guardar visita';} return; }
+
+  if (data.oc_emitida && data.fecha_entrega) {
+    const entregaPayload = { visita_id: v.id, pdv_id: pdvId, fecha_entrega: data.fecha_entrega, confirmada: false };
+    if (v.entrega_id) {
+      await sb.from('entregas').update(entregaPayload).eq('id', v.entrega_id);
+    } else {
+      const { data: insEntrega } = await sb.from('entregas').insert(entregaPayload).select().single();
+      if (insEntrega) { v.entrega_id = insEntrega.id; visitasPorDia[diaActivo][pdvId].entrega_id = insEntrega.id; }
+    }
+  }
 
   if (btn) { btn.classList.add('saved'); btn.textContent = '✓ Guardado'; btn.disabled = false; }
 
