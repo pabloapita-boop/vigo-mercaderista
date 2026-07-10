@@ -210,6 +210,7 @@ tr:hover td { background: var(--bg); }
           <th>Fecha</th>
           <th>PDV</th>
           <th>Cadena</th>
+          <th>Hora llegada</th>
           <th>Tipo visita</th>
           <th>OC emitida</th>
           <th>Entrega</th>
@@ -218,10 +219,11 @@ tr:hover td { background: var(--bg); }
         </tr>
       </thead>
       <tbody id="tabla-visitas">
-        <tr><td colspan="8" class="loading">Cargando...</td></tr>
+        <tr><td colspan="9" class="loading">Cargando...</td></tr>
       </tbody>
     </table>
   </div>
+  <div style="font-size:12px; color:var(--muted); margin-top:8px;">Haz clic en una visita para ver el reporte completo (fotos e inventario).</div>
 </div>
 
 <!-- ===== CONTROL ===== -->
@@ -501,6 +503,17 @@ tr:hover td { background: var(--bg); }
     <div class="modal-actions">
       <button class="btn btn-outline" onclick="closeModal('modal-import')">Cancelar</button>
       <button class="btn btn-primary" id="btn-confirmar-import" onclick="confirmarImportExcel()">Importar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL DETALLE DE VISITA -->
+<div class="modal-bg" id="modal-detalle-visita">
+  <div class="modal" style="max-width:600px;">
+    <div class="modal-title" id="detalle-titulo">Detalle de Visita</div>
+    <div id="detalle-contenido"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModal('modal-detalle-visita')">Cerrar</button>
     </div>
   </div>
 </div>
@@ -977,20 +990,69 @@ async function cargarVisitas() {
   if (cadena) visitas = visitas.filter(v => v.pdv?.cadena === cadena);
 
   const tbody = document.getElementById('tabla-visitas');
-  if (!visitas.length) { tbody.innerHTML = '<tr><td colspan="8" class="loading">Sin visitas registradas</td></tr>'; return; }
+  if (!visitas.length) { tbody.innerHTML = '<tr><td colspan="9" class="loading">Sin visitas registradas</td></tr>'; return; }
 
   tbody.innerHTML = visitas.map(v => `
-    <tr>
+    <tr onclick="verDetalleVisita('${v.id}')" style="cursor:pointer;">
       <td>${v.fecha}</td>
       <td>${v.pdv?.nombre || '—'}</td>
       <td>${v.pdv?.cadena || '—'}</td>
+      <td>${v.hora_llegada || '—'}</td>
       <td>${v.tipo_visita === 'mercadeo_pedido' ? '<span class="badge badge-blue">Mercadeo + pedido</span>' : '<span class="badge badge-gray">Solo mercadeo</span>'}</td>
       <td>${v.oc_emitida ? '<span class="badge badge-green">Sí</span>' : '<span class="badge badge-red">No</span>'}</td>
       <td>${v.fecha_entrega || '—'}</td>
       <td style="max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${v.observaciones || '—'}</td>
-      <td><button class="btn btn-sm btn-danger" onclick="eliminarVisita('${v.id}')">×</button></td>
+      <td><button class="btn btn-sm btn-danger" onclick="event.stopPropagation(); eliminarVisita('${v.id}')">×</button></td>
     </tr>
   `).join('');
+}
+
+async function verDetalleVisita(id) {
+  const { data: v, error } = await sb.from('visitas').select('*, pdv(nombre,cadena)').eq('id', id).single();
+  if (error || !v) { alert('No se pudo cargar el detalle de la visita.'); return; }
+  const { data: inv } = await sb.from('visita_inventario').select('*, productos(nombre,foto)').eq('visita_id', id);
+
+  document.getElementById('detalle-titulo').textContent = `${v.pdv?.nombre || '—'} · ${v.fecha}`;
+
+  const badges = [
+    v.visitado ? '<span class="badge badge-green">Visitado</span>' : '<span class="badge badge-red">No visitado</span>',
+    v.tipo_visita === 'mercadeo_pedido' ? '<span class="badge badge-blue">Mercadeo + pedido</span>' : '<span class="badge badge-gray">Solo mercadeo</span>',
+    v.oc_emitida ? '<span class="badge badge-green">OC emitida</span>' : '<span class="badge badge-gray">Sin OC</span>',
+    v.mercancia_deposito ? '<span class="badge badge-blue">Mercancía en depósito</span>' : '',
+  ].filter(Boolean).join(' ');
+
+  const fotos = (v.fotos || []).map(url => `<img src="${url}" style="width:90px;height:90px;object-fit:cover;border-radius:8px;cursor:pointer;" onclick="window.open('${url}','_blank')">`).join('');
+
+  const inventarioHtml = (inv && inv.length)
+    ? inv.map(it => `
+        <div style="display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid var(--border);">
+          ${it.productos?.foto ? `<img src="${it.productos.foto}" style="width:32px;height:32px;object-fit:contain;background:var(--bg);border:1px solid var(--border);border-radius:6px;">` : ''}
+          <span style="flex:1;">${it.productos?.nombre || '—'}</span>
+          <span style="font-size:12px; color:var(--muted); white-space:nowrap;">🗄️ ${it.unidades_anaquel} anaquel · 📦 ${it.unidades_deposito} depósito</span>
+        </div>
+      `).join('')
+    : '<div style="color:var(--muted); font-size:13px;">Sin inventario registrado en esta visita.</div>';
+
+  document.getElementById('detalle-contenido').innerHTML = `
+    <div style="margin-bottom:16px;">${badges}</div>
+    <div class="form-row cols-2" style="margin-bottom:16px;">
+      <div><label>Hora de llegada</label><div>${v.hora_llegada || '—'}</div></div>
+      <div><label>Fecha de entrega comprometida</label><div>${v.fecha_entrega || '—'}</div></div>
+    </div>
+    <div style="margin-bottom:16px;">
+      <label>Observaciones</label>
+      <div style="white-space:pre-wrap; font-size:13px;">${v.observaciones || '—'}</div>
+    </div>
+    <div style="margin-bottom:16px;">
+      <label>Fotos</label>
+      <div style="display:flex; flex-wrap:wrap; gap:8px;">${fotos || '<span style="color:var(--muted); font-size:13px;">Sin fotos</span>'}</div>
+    </div>
+    <div>
+      <label>Inventario registrado</label>
+      ${inventarioHtml}
+    </div>
+  `;
+  document.getElementById('modal-detalle-visita').classList.add('open');
 }
 
 function openModalVisita(v = null) {
