@@ -147,6 +147,7 @@ tr:hover td { background: var(--bg); }
     <div class="nav-tab active" onclick="showPage('rutas')">Rutas</div>
     <div class="nav-tab" onclick="showPage('visitas')">Visitas</div>
     <div class="nav-tab" onclick="showPage('control')">Control</div>
+    <div class="nav-tab" onclick="showPage('inventario')">Inventario</div>
     <div class="nav-tab" onclick="showPage('pdvs')">Puntos de Venta</div>
   </div>
 </nav>
@@ -281,6 +282,62 @@ tr:hover td { background: var(--bg); }
   </div>
 </div>
 
+<!-- ===== INVENTARIO ===== -->
+<div class="page" id="page-inventario">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+    <h2 style="font-size:18px; font-weight:700;">Catálogo de Productos</h2>
+    <button class="btn btn-primary" onclick="openModalProducto()">+ Nuevo producto</button>
+  </div>
+
+  <div class="card" style="padding:0; overflow:hidden; margin-bottom:24px;">
+    <table>
+      <thead>
+        <tr>
+          <th>Producto</th>
+          <th>Categoría</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="tabla-productos">
+        <tr><td colspan="3" class="loading">Cargando...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 style="font-size:18px; font-weight:700; margin-bottom:16px;">Inventario Reportado en Visitas</h2>
+
+  <div class="filters">
+    <select id="filtro-cadena-inv" onchange="cargarInventario()">
+      <option value="">Todas las cadenas</option>
+    </select>
+    <select id="filtro-pdv-inv" onchange="cargarInventario()">
+      <option value="">Todos los PDV</option>
+    </select>
+    <select id="filtro-producto-inv" onchange="cargarInventario()">
+      <option value="">Todos los productos</option>
+    </select>
+    <input type="month" id="filtro-mes-inv" onchange="cargarInventario()">
+  </div>
+
+  <div class="card" style="padding:0; overflow:hidden;">
+    <table>
+      <thead>
+        <tr>
+          <th>Fecha</th>
+          <th>PDV</th>
+          <th>Cadena</th>
+          <th>Producto</th>
+          <th>Unid. anaquel</th>
+          <th>Unid. depósito</th>
+        </tr>
+      </thead>
+      <tbody id="tabla-inventario">
+        <tr><td colspan="6" class="loading">Cargando...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
 <!-- ===== PDVs ===== -->
 <div class="page" id="page-pdvs">
   <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
@@ -399,6 +456,22 @@ tr:hover td { background: var(--bg); }
   </div>
 </div>
 
+<!-- MODAL PRODUCTO -->
+<div class="modal-bg" id="modal-producto">
+  <div class="modal">
+    <div class="modal-title">Producto</div>
+    <input type="hidden" id="prod-id">
+    <div class="form-row cols-2">
+      <div><label>Nombre</label><input type="text" id="prod-nombre"></div>
+      <div><label>Categoría</label><input type="text" id="prod-categoria" placeholder="Ej: Alimento, Accesorios"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModal('modal-producto')">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarProducto()">Guardar</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const SUPABASE_URL = 'https://ocwwomxgcvqugxmgekta.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9jd3dvbXhnY3ZxdWd4bWdla3RhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIyOTY3MTksImV4cCI6MjA5Nzg3MjcxOX0.Z7RAIfLUOm3q_O2tGz8eszOlBzRRqNeTEq4SGDEq8GU';
@@ -413,6 +486,7 @@ let allPDVs = [];
 let pdvMap = {}; // id -> pdv object for safe editing
 let drag = { item: null, from: null };
 let rutaActualId = null;
+let productoMap = {}; // id -> producto object for safe editing
 
 // ===== NAVIGATION =====
 function showPage(name) {
@@ -422,6 +496,7 @@ function showPage(name) {
   event.target.classList.add('active');
   if (name === 'visitas') cargarVisitas();
   if (name === 'control') { setDefaultMes('filtro-mes-c'); cargarControl(); }
+  if (name === 'inventario') { setDefaultMes('filtro-mes-inv'); cargarProductos(); cargarInventario(); }
   if (name === 'pdvs') cargarPDVs();
 }
 
@@ -511,7 +586,7 @@ function getFechasDia() {
 async function cargarCadenas() {
   const { data } = await sb.from('pdv').select('cadena').eq('activo', true);
   const cadenas = [...new Set(data?.map(d => d.cadena).filter(Boolean) || [])].sort();
-  ['filtro-cadena-ruta','filtro-cadena-v','filtro-cadena-c','filtro-cadena-p'].forEach(id => {
+  ['filtro-cadena-ruta','filtro-cadena-v','filtro-cadena-c','filtro-cadena-inv','filtro-cadena-p'].forEach(id => {
     const sel = document.getElementById(id);
     if (!sel) return;
     const val = sel.value;
@@ -545,6 +620,10 @@ async function cargarPDVPool() {
   const selp = document.getElementById('filtro-pdv-v');
   if (selp) {
     selp.innerHTML = '<option value="">Todos los PDV</option>' + allPDVs.map(p => `<option value="${p.id}">${p.nombre}</option>`).join('');
+  }
+  const selpInv = document.getElementById('filtro-pdv-inv');
+  if (selpInv) {
+    selpInv.innerHTML = '<option value="">Todos los PDV</option>' + allPDVs.map(p => `<option value="${p.id}">${p.nombre}</option>`).join('');
   }
 }
 
@@ -1079,6 +1158,104 @@ function agregarNuevaCadena() {
   const opt = new Option(nombre.trim(), nombre.trim());
   sel.add(opt);
   sel.value = nombre.trim();
+}
+
+// ===== PRODUCTOS / INVENTARIO =====
+async function cargarProductos() {
+  const { data } = await sb.from('productos').select('*').eq('activo', true).order('nombre');
+  const productos = data || [];
+  productoMap = {};
+  productos.forEach(p => productoMap[p.id] = p);
+
+  const tbody = document.getElementById('tabla-productos');
+  if (!productos.length) { tbody.innerHTML = '<tr><td colspan="3" class="loading">Sin productos registrados</td></tr>'; }
+  else {
+    tbody.innerHTML = productos.map(p => `
+      <tr>
+        <td><strong>${p.nombre}</strong></td>
+        <td>${p.categoria || '—'}</td>
+        <td style="white-space:nowrap;">
+          <button class="btn btn-sm btn-outline" onclick="editarProducto('${p.id}')">✏️</button>
+          <button class="btn btn-sm btn-danger" onclick="eliminarProducto('${p.id}')">×</button>
+        </td>
+      </tr>
+    `).join('');
+  }
+
+  const selProd = document.getElementById('filtro-producto-inv');
+  if (selProd) {
+    const val = selProd.value;
+    selProd.innerHTML = '<option value="">Todos los productos</option>' + productos.map(p => `<option value="${p.id}">${p.nombre}</option>`).join('');
+    selProd.value = val;
+  }
+}
+
+function openModalProducto() {
+  document.getElementById('prod-id').value = '';
+  document.getElementById('prod-nombre').value = '';
+  document.getElementById('prod-categoria').value = '';
+  document.getElementById('modal-producto').classList.add('open');
+}
+
+function editarProducto(id) {
+  const p = productoMap[id];
+  if (!p) return;
+  document.getElementById('prod-id').value = p.id;
+  document.getElementById('prod-nombre').value = p.nombre;
+  document.getElementById('prod-categoria').value = p.categoria || '';
+  document.getElementById('modal-producto').classList.add('open');
+}
+
+async function guardarProducto() {
+  const nombre = document.getElementById('prod-nombre').value.trim();
+  if (!nombre) { alert('El nombre es obligatorio.'); return; }
+  const data = {
+    nombre,
+    categoria: document.getElementById('prod-categoria').value || null,
+  };
+  const id = document.getElementById('prod-id').value;
+  let error;
+  if (id) { ({ error } = await sb.from('productos').update(data).eq('id', id)); }
+  else { ({ error } = await sb.from('productos').insert(data)); }
+  if (error) { alert('Error al guardar: ' + error.message); return; }
+  closeModal('modal-producto');
+  await cargarProductos();
+}
+
+async function eliminarProducto(id) {
+  if (!confirm('¿Desactivar este producto?')) return;
+  await sb.from('productos').update({ activo: false }).eq('id', id);
+  cargarProductos();
+}
+
+async function cargarInventario() {
+  const cadena = document.getElementById('filtro-cadena-inv').value;
+  const pdvId = document.getElementById('filtro-pdv-inv').value;
+  const productoId = document.getElementById('filtro-producto-inv').value;
+  const mes = document.getElementById('filtro-mes-inv').value;
+
+  let q = sb.from('visita_inventario').select('*, pdv(nombre,cadena), productos(nombre)').order('fecha', { ascending: false });
+  if (pdvId) q = q.eq('pdv_id', pdvId);
+  if (productoId) q = q.eq('producto_id', productoId);
+  if (mes) { q = q.gte('fecha', mes+'-01').lte('fecha', mes+'-31'); }
+  const { data } = await q;
+
+  let rows = data || [];
+  if (cadena) rows = rows.filter(r => r.pdv?.cadena === cadena);
+
+  const tbody = document.getElementById('tabla-inventario');
+  if (!rows.length) { tbody.innerHTML = '<tr><td colspan="6" class="loading">Sin inventario registrado</td></tr>'; return; }
+
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td>${r.fecha}</td>
+      <td>${r.pdv?.nombre || '—'}</td>
+      <td>${r.pdv?.cadena || '—'}</td>
+      <td>${r.productos?.nombre || '—'}</td>
+      <td style="text-align:center;">${r.unidades_anaquel}</td>
+      <td style="text-align:center;">${r.unidades_deposito}</td>
+    </tr>
+  `).join('');
 }
 
 function poblarSelectCadenas(cadenas, selectedValue = '') {

@@ -130,6 +130,20 @@ textarea:focus { outline: none; border-color: var(--orange); }
 .btn-save.saved { background: var(--green); }
 .btn-save:disabled { opacity: 0.6; }
 
+/* INVENTARIO */
+select, input[type="date"], input[type="number"] { width: 100%; padding: 10px 12px; border: 1.5px solid var(--border); border-radius: 10px; font-size: 14px; font-family: inherit; background: white; color: var(--text); }
+select:focus, input[type="date"]:focus, input[type="number"]:focus { outline: none; border-color: var(--orange); }
+.inv-row { display: flex; align-items: center; gap: 8px; background: white; border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; margin-bottom: 6px; font-size: 13px; }
+.inv-row-name { flex: 1; font-weight: 600; }
+.inv-row-qty { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.inv-row-remove { color: var(--muted); cursor: pointer; font-size: 18px; line-height: 1; padding: 0 2px; }
+.inv-row-remove:hover { color: var(--red); }
+.inv-add-box { background: white; border: 1.5px dashed #C7C7CC; border-radius: 12px; padding: 12px; margin-top: 4px; }
+.inv-qty-row { display: flex; gap: 8px; margin-top: 8px; }
+.inv-qty-row > div { flex: 1; }
+.inv-mini-label { font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; display: block; margin-bottom: 4px; }
+.btn-add-inv { width: 100%; margin-top: 10px; padding: 10px; border: none; border-radius: 10px; background: var(--dark); color: white; font-size: 13px; font-weight: 600; cursor: pointer; }
+
 /* ENTREGA CARD */
 .entrega-card { border: 1.5px solid #FDBA74; }
 .entrega-num { background: linear-gradient(135deg, #EA580C, #9A3412) !important; }
@@ -198,6 +212,7 @@ let ruta = null;
 let rutaItemsPorDia = {};
 let visitasPorDia = {};
 let entregasPorDia = {};
+let productosCatalogo = [];
 let diaActivo = '';
 let todayStr = '';
 
@@ -274,7 +289,18 @@ async function init() {
   if (visitaIds.length) {
     const { data: entregasVinc } = await sb.from('entregas').select('id, visita_id').in('visita_id', visitaIds);
     entregasVinc?.forEach(e => { if (visitaIndex[e.visita_id]) visitaIndex[e.visita_id].entrega_id = e.id; });
+
+    const { data: inventarioVinc } = await sb.from('visita_inventario').select('*, productos(nombre)').in('visita_id', visitaIds);
+    inventarioVinc?.forEach(row => {
+      const v = visitaIndex[row.visita_id];
+      if (!v) return;
+      if (!v.inventario) v.inventario = [];
+      v.inventario.push({ producto_id: row.producto_id, nombre: row.productos?.nombre || '—', unidades_anaquel: row.unidades_anaquel, unidades_deposito: row.unidades_deposito });
+    });
   }
+
+  const { data: productos } = await sb.from('productos').select('*').eq('activo', true).order('nombre');
+  productosCatalogo = productos || [];
 
   // Load pending (unconfirmed) entregas due this week, regardless of which day they were created
   DIAS_RUTA.forEach(d => { entregasPorDia[d] = []; });
@@ -481,6 +507,32 @@ function renderCard(item, idx, visita, color, isToday, fechaDia) {
         </div>
 
         <div class="form-group">
+          <label>Inventario en el punto de venta</label>
+          <div id="inventario-list-${pdv.id}">
+            ${(visita?.inventario || []).map((it, i) => renderInventarioRow(pdv.id, fechaDia, it, i)).join('')}
+          </div>
+          ${isToday ? `
+          <div class="inv-add-box">
+            <select id="inv-producto-${pdv.id}">
+              <option value="">Seleccionar producto...</option>
+              ${productosCatalogo.map(p => `<option value="${p.id}">${p.nombre}</option>`).join('')}
+            </select>
+            <div class="inv-qty-row">
+              <div>
+                <label class="inv-mini-label">Unid. anaquel</label>
+                <input type="number" min="0" id="inv-anaquel-${pdv.id}" placeholder="0">
+              </div>
+              <div>
+                <label class="inv-mini-label">Unid. depósito</label>
+                <input type="number" min="0" id="inv-deposito-${pdv.id}" placeholder="0">
+              </div>
+            </div>
+            <button type="button" class="btn-add-inv" onclick="agregarInventario('${pdv.id}','${fechaDia}')">+ Agregar producto</button>
+          </div>
+          ` : ''}
+        </div>
+
+        <div class="form-group">
           <label>Observaciones</label>
           <textarea id="obs-${pdv.id}" placeholder="Estado del anaquel, incidencias..." ${!isToday?'disabled':''} onblur="setObs('${pdv.id}','${fechaDia}')">${visita?.observaciones || ''}</textarea>
         </div>
@@ -544,6 +596,47 @@ function setObs(pdvId, fechaDia) {
 
 function setFechaEntrega(pdvId, fechaDia) {
   getLocal(pdvId, fechaDia).fecha_entrega = document.getElementById('fecha-entrega-' + pdvId).value || null;
+}
+
+function renderInventarioRow(pdvId, fechaDia, item, idx) {
+  return `
+    <div class="inv-row">
+      <span class="inv-row-name">${item.nombre}</span>
+      <span class="inv-row-qty">🗄️ ${item.unidades_anaquel} anaquel · 📦 ${item.unidades_deposito} depósito</span>
+      <span class="inv-row-remove" onclick="quitarInventario('${pdvId}','${fechaDia}',${idx})">×</span>
+    </div>
+  `;
+}
+
+function agregarInventario(pdvId, fechaDia) {
+  const sel = document.getElementById('inv-producto-' + pdvId);
+  const productoId = sel.value;
+  if (!productoId) { toast('Selecciona un producto'); return; }
+  const nombre = sel.options[sel.selectedIndex].text;
+  const anaquel = parseInt(document.getElementById('inv-anaquel-' + pdvId).value) || 0;
+  const deposito = parseInt(document.getElementById('inv-deposito-' + pdvId).value) || 0;
+
+  const v = getLocal(pdvId, fechaDia);
+  if (!v.inventario) v.inventario = [];
+  const existente = v.inventario.findIndex(it => it.producto_id === productoId);
+  const item = { producto_id: productoId, nombre, unidades_anaquel: anaquel, unidades_deposito: deposito };
+  if (existente >= 0) v.inventario[existente] = item;
+  else v.inventario.push(item);
+
+  sel.value = '';
+  document.getElementById('inv-anaquel-' + pdvId).value = '';
+  document.getElementById('inv-deposito-' + pdvId).value = '';
+
+  document.getElementById('inventario-list-' + pdvId).innerHTML =
+    v.inventario.map((it, i) => renderInventarioRow(pdvId, fechaDia, it, i)).join('');
+}
+
+function quitarInventario(pdvId, fechaDia, idx) {
+  const v = getLocal(pdvId, fechaDia);
+  if (!v.inventario) return;
+  v.inventario.splice(idx, 1);
+  document.getElementById('inventario-list-' + pdvId).innerHTML =
+    v.inventario.map((it, i) => renderInventarioRow(pdvId, fechaDia, it, i)).join('');
 }
 
 async function subirFoto(pdvId, fechaDia, input) {
@@ -658,6 +751,18 @@ async function guardar(pdvId, fechaDia) {
       const { data: insEntrega } = await sb.from('entregas').insert(entregaPayload).select().single();
       if (insEntrega) { v.entrega_id = insEntrega.id; visitasPorDia[diaActivo][pdvId].entrega_id = insEntrega.id; }
     }
+  }
+
+  // Sync inventory: full replace is simplest and safe given the small row counts per visita
+  await sb.from('visita_inventario').delete().eq('visita_id', v.id);
+  if (v.inventario && v.inventario.length) {
+    const rows = v.inventario.map(it => ({
+      visita_id: v.id, pdv_id: pdvId, fecha: fechaDia,
+      producto_id: it.producto_id,
+      unidades_anaquel: it.unidades_anaquel || 0,
+      unidades_deposito: it.unidades_deposito || 0,
+    }));
+    await sb.from('visita_inventario').insert(rows);
   }
 
   if (btn) { btn.classList.add('saved'); btn.textContent = '✓ Guardado'; btn.disabled = false; }
