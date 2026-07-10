@@ -139,6 +139,16 @@ select:focus, input[type="date"]:focus, input[type="number"]:focus { outline: no
 .inv-row-remove { color: var(--muted); cursor: pointer; font-size: 18px; line-height: 1; padding: 0 2px; }
 .inv-row-remove:hover { color: var(--red); }
 .inv-add-box { background: white; border: 1.5px dashed #C7C7CC; border-radius: 12px; padding: 12px; margin-top: 4px; }
+.inv-search-wrap { position: relative; }
+.inv-search-results { position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid var(--border); border-radius: 10px; margin-top: 4px; max-height: 220px; overflow-y: auto; box-shadow: 0 4px 16px rgba(0,0,0,0.15); z-index: 10; display: none; }
+.inv-search-results.open { display: block; }
+.inv-search-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; cursor: pointer; font-size: 13px; }
+.inv-search-item:active { background: var(--bg); }
+.inv-search-empty { padding: 10px; font-size: 12px; color: var(--muted); text-align: center; }
+.inv-search-thumb { width: 32px; height: 32px; border-radius: 6px; object-fit: cover; flex-shrink: 0; background: var(--bg); }
+.inv-search-thumb-empty { display: flex; align-items: center; justify-content: center; font-size: 14px; }
+.inv-selected-chip { display: flex; align-items: center; gap: 8px; background: #FFF7ED; border: 1px solid #FDBA74; border-radius: 10px; padding: 8px 10px; margin-top: 8px; font-size: 13px; font-weight: 600; }
+.inv-selected-chip span:not(.inv-row-remove) { flex: 1; }
 .inv-qty-row { display: flex; gap: 8px; margin-top: 8px; }
 .inv-qty-row > div { flex: 1; }
 .inv-mini-label { font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; display: block; margin-bottom: 4px; }
@@ -290,12 +300,12 @@ async function init() {
     const { data: entregasVinc } = await sb.from('entregas').select('id, visita_id').in('visita_id', visitaIds);
     entregasVinc?.forEach(e => { if (visitaIndex[e.visita_id]) visitaIndex[e.visita_id].entrega_id = e.id; });
 
-    const { data: inventarioVinc } = await sb.from('visita_inventario').select('*, productos(nombre)').in('visita_id', visitaIds);
+    const { data: inventarioVinc } = await sb.from('visita_inventario').select('*, productos(nombre, foto)').in('visita_id', visitaIds);
     inventarioVinc?.forEach(row => {
       const v = visitaIndex[row.visita_id];
       if (!v) return;
       if (!v.inventario) v.inventario = [];
-      v.inventario.push({ producto_id: row.producto_id, nombre: row.productos?.nombre || '—', unidades_anaquel: row.unidades_anaquel, unidades_deposito: row.unidades_deposito });
+      v.inventario.push({ producto_id: row.producto_id, nombre: row.productos?.nombre || '—', foto: row.productos?.foto || null, unidades_anaquel: row.unidades_anaquel, unidades_deposito: row.unidades_deposito });
     });
   }
 
@@ -513,10 +523,13 @@ function renderCard(item, idx, visita, color, isToday, fechaDia) {
           </div>
           ${isToday ? `
           <div class="inv-add-box">
-            <select id="inv-producto-${pdv.id}">
-              <option value="">Seleccionar producto...</option>
-              ${productosCatalogo.map(p => `<option value="${p.id}">${p.nombre}</option>`).join('')}
-            </select>
+            <div class="inv-search-wrap">
+              <input type="text" id="inv-search-${pdv.id}" placeholder="Buscar producto..." autocomplete="off"
+                oninput="buscarProducto('${pdv.id}')" onfocus="buscarProducto('${pdv.id}')"
+                onblur="setTimeout(() => cerrarBusquedaProducto('${pdv.id}'), 150)">
+              <div class="inv-search-results" id="inv-results-${pdv.id}"></div>
+            </div>
+            <div id="inv-selected-${pdv.id}"></div>
             <div class="inv-qty-row">
               <div>
                 <label class="inv-mini-label">Unid. anaquel</label>
@@ -598,9 +611,16 @@ function setFechaEntrega(pdvId, fechaDia) {
   getLocal(pdvId, fechaDia).fecha_entrega = document.getElementById('fecha-entrega-' + pdvId).value || null;
 }
 
+function renderInvThumb(foto) {
+  return foto
+    ? `<img src="${foto}" class="inv-search-thumb">`
+    : `<div class="inv-search-thumb inv-search-thumb-empty">📦</div>`;
+}
+
 function renderInventarioRow(pdvId, fechaDia, item, idx) {
   return `
     <div class="inv-row">
+      ${renderInvThumb(item.foto)}
       <span class="inv-row-name">${item.nombre}</span>
       <span class="inv-row-qty">🗄️ ${item.unidades_anaquel} anaquel · 📦 ${item.unidades_deposito} depósito</span>
       <span class="inv-row-remove" onclick="quitarInventario('${pdvId}','${fechaDia}',${idx})">×</span>
@@ -608,22 +628,72 @@ function renderInventarioRow(pdvId, fechaDia, item, idx) {
   `;
 }
 
+let inventarioSeleccion = {}; // pdvId -> producto seleccionado en el buscador, pendiente de agregar
+
+function normalizarTextoMerc(s) {
+  return (s || '').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+function buscarProducto(pdvId) {
+  const input = document.getElementById('inv-search-' + pdvId);
+  const resultsEl = document.getElementById('inv-results-' + pdvId);
+  const q = normalizarTextoMerc(input.value);
+  if (!q) { resultsEl.innerHTML = ''; resultsEl.classList.remove('open'); return; }
+
+  const matches = productosCatalogo.filter(p => normalizarTextoMerc(p.nombre).includes(q)).slice(0, 8);
+  resultsEl.innerHTML = matches.length
+    ? matches.map(p => `
+        <div class="inv-search-item" onclick="seleccionarProducto('${pdvId}','${p.id}')">
+          ${renderInvThumb(p.foto)}
+          <span>${p.nombre}</span>
+        </div>
+      `).join('')
+    : '<div class="inv-search-empty">Sin resultados</div>';
+  resultsEl.classList.add('open');
+}
+
+function cerrarBusquedaProducto(pdvId) {
+  const el = document.getElementById('inv-results-' + pdvId);
+  if (el) el.classList.remove('open');
+}
+
+function seleccionarProducto(pdvId, productoId) {
+  const p = productosCatalogo.find(x => x.id === productoId);
+  if (!p) return;
+  inventarioSeleccion[pdvId] = p;
+
+  document.getElementById('inv-search-' + pdvId).value = '';
+  document.getElementById('inv-results-' + pdvId).innerHTML = '';
+  document.getElementById('inv-results-' + pdvId).classList.remove('open');
+  document.getElementById('inv-selected-' + pdvId).innerHTML = `
+    <div class="inv-selected-chip">
+      ${renderInvThumb(p.foto)}
+      <span>${p.nombre}</span>
+      <span class="inv-row-remove" onclick="limpiarSeleccionProducto('${pdvId}')">×</span>
+    </div>
+  `;
+}
+
+function limpiarSeleccionProducto(pdvId) {
+  delete inventarioSeleccion[pdvId];
+  const el = document.getElementById('inv-selected-' + pdvId);
+  if (el) el.innerHTML = '';
+}
+
 function agregarInventario(pdvId, fechaDia) {
-  const sel = document.getElementById('inv-producto-' + pdvId);
-  const productoId = sel.value;
-  if (!productoId) { toast('Selecciona un producto'); return; }
-  const nombre = sel.options[sel.selectedIndex].text;
+  const p = inventarioSeleccion[pdvId];
+  if (!p) { toast('Busca y selecciona un producto'); return; }
   const anaquel = parseInt(document.getElementById('inv-anaquel-' + pdvId).value) || 0;
   const deposito = parseInt(document.getElementById('inv-deposito-' + pdvId).value) || 0;
 
   const v = getLocal(pdvId, fechaDia);
   if (!v.inventario) v.inventario = [];
-  const existente = v.inventario.findIndex(it => it.producto_id === productoId);
-  const item = { producto_id: productoId, nombre, unidades_anaquel: anaquel, unidades_deposito: deposito };
+  const existente = v.inventario.findIndex(it => it.producto_id === p.id);
+  const item = { producto_id: p.id, nombre: p.nombre, foto: p.foto, unidades_anaquel: anaquel, unidades_deposito: deposito };
   if (existente >= 0) v.inventario[existente] = item;
   else v.inventario.push(item);
 
-  sel.value = '';
+  limpiarSeleccionProducto(pdvId);
   document.getElementById('inv-anaquel-' + pdvId).value = '';
   document.getElementById('inv-deposito-' + pdvId).value = '';
 

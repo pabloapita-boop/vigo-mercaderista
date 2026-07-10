@@ -11,6 +11,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -286,20 +287,29 @@ tr:hover td { background: var(--bg); }
 <div class="page" id="page-inventario">
   <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
     <h2 style="font-size:18px; font-weight:700;">Catálogo de Productos</h2>
-    <button class="btn btn-primary" onclick="openModalProducto()">+ Nuevo producto</button>
+    <div style="display:flex; gap:8px;">
+      <button class="btn btn-outline" onclick="document.getElementById('excel-productos-input').click()">📤 Importar Excel</button>
+      <input type="file" id="excel-productos-input" accept=".xlsx,.xls,.csv" style="display:none" onchange="previewImportExcel(this)">
+      <button class="btn btn-primary" onclick="openModalProducto()">+ Nuevo producto</button>
+    </div>
+  </div>
+
+  <div style="font-size:12px; color:var(--muted); margin-bottom:10px;">
+    El Excel debe tener una columna <strong>nombre</strong> (o "producto") y opcionalmente <strong>categoria</strong>. La primera fila debe ser el encabezado.
   </div>
 
   <div class="card" style="padding:0; overflow:hidden; margin-bottom:24px;">
     <table>
       <thead>
         <tr>
+          <th></th>
           <th>Producto</th>
           <th>Categoría</th>
           <th></th>
         </tr>
       </thead>
       <tbody id="tabla-productos">
-        <tr><td colspan="3" class="loading">Cargando...</td></tr>
+        <tr><td colspan="4" class="loading">Cargando...</td></tr>
       </tbody>
     </table>
   </div>
@@ -461,13 +471,36 @@ tr:hover td { background: var(--bg); }
   <div class="modal">
     <div class="modal-title">Producto</div>
     <input type="hidden" id="prod-id">
+    <input type="hidden" id="prod-foto-url">
     <div class="form-row cols-2">
       <div><label>Nombre</label><input type="text" id="prod-nombre"></div>
       <div><label>Categoría</label><input type="text" id="prod-categoria" placeholder="Ej: Alimento, Accesorios"></div>
     </div>
+    <div class="form-row">
+      <div>
+        <label>Foto de referencia (opcional)</label>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <img id="prod-foto-preview" src="" style="width:56px; height:56px; border-radius:8px; object-fit:cover; background:var(--bg); display:none;">
+          <input type="file" accept="image/*" id="prod-foto-input" onchange="subirFotoProducto(this)">
+        </div>
+      </div>
+    </div>
     <div class="modal-actions">
       <button class="btn btn-outline" onclick="closeModal('modal-producto')">Cancelar</button>
       <button class="btn btn-primary" onclick="guardarProducto()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL IMPORTAR EXCEL -->
+<div class="modal-bg" id="modal-import">
+  <div class="modal">
+    <div class="modal-title">Importar productos desde Excel</div>
+    <div id="import-summary" style="font-size:13px; margin-bottom:12px; color:var(--muted);"></div>
+    <div id="import-preview" style="max-height:300px; overflow-y:auto; font-size:13px;"></div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModal('modal-import')">Cancelar</button>
+      <button class="btn btn-primary" id="btn-confirmar-import" onclick="confirmarImportExcel()">Importar</button>
     </div>
   </div>
 </div>
@@ -1168,10 +1201,11 @@ async function cargarProductos() {
   productos.forEach(p => productoMap[p.id] = p);
 
   const tbody = document.getElementById('tabla-productos');
-  if (!productos.length) { tbody.innerHTML = '<tr><td colspan="3" class="loading">Sin productos registrados</td></tr>'; }
+  if (!productos.length) { tbody.innerHTML = '<tr><td colspan="4" class="loading">Sin productos registrados</td></tr>'; }
   else {
     tbody.innerHTML = productos.map(p => `
       <tr>
+        <td>${p.foto ? `<img src="${p.foto}" style="width:32px;height:32px;border-radius:6px;object-fit:cover;">` : ''}</td>
         <td><strong>${p.nombre}</strong></td>
         <td>${p.categoria || '—'}</td>
         <td style="white-space:nowrap;">
@@ -1194,6 +1228,10 @@ function openModalProducto() {
   document.getElementById('prod-id').value = '';
   document.getElementById('prod-nombre').value = '';
   document.getElementById('prod-categoria').value = '';
+  document.getElementById('prod-foto-url').value = '';
+  document.getElementById('prod-foto-input').value = '';
+  const preview = document.getElementById('prod-foto-preview');
+  preview.src = ''; preview.style.display = 'none';
   document.getElementById('modal-producto').classList.add('open');
 }
 
@@ -1203,7 +1241,25 @@ function editarProducto(id) {
   document.getElementById('prod-id').value = p.id;
   document.getElementById('prod-nombre').value = p.nombre;
   document.getElementById('prod-categoria').value = p.categoria || '';
+  document.getElementById('prod-foto-url').value = p.foto || '';
+  document.getElementById('prod-foto-input').value = '';
+  const preview = document.getElementById('prod-foto-preview');
+  if (p.foto) { preview.src = p.foto; preview.style.display = 'inline-block'; }
+  else { preview.src = ''; preview.style.display = 'none'; }
   document.getElementById('modal-producto').classList.add('open');
+}
+
+async function subirFotoProducto(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const fileName = `productos/${Date.now()}.jpg`;
+  const { error } = await sb.storage.from('visita-fotos').upload(fileName, file, { upsert: true });
+  if (error) { alert('Error al subir foto: ' + error.message); return; }
+  const { data: { publicUrl } } = sb.storage.from('visita-fotos').getPublicUrl(fileName);
+  document.getElementById('prod-foto-url').value = publicUrl;
+  const preview = document.getElementById('prod-foto-preview');
+  preview.src = publicUrl;
+  preview.style.display = 'inline-block';
 }
 
 async function guardarProducto() {
@@ -1212,6 +1268,7 @@ async function guardarProducto() {
   const data = {
     nombre,
     categoria: document.getElementById('prod-categoria').value || null,
+    foto: document.getElementById('prod-foto-url').value || null,
   };
   const id = document.getElementById('prod-id').value;
   let error;
@@ -1226,6 +1283,75 @@ async function eliminarProducto(id) {
   if (!confirm('¿Desactivar este producto?')) return;
   await sb.from('productos').update({ activo: false }).eq('id', id);
   cargarProductos();
+}
+
+// ===== IMPORTAR PRODUCTOS DESDE EXCEL =====
+let importPendiente = [];
+
+function normalizarTexto(s) {
+  return (s || '').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+}
+
+async function previewImportExcel(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: 'array' });
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+  input.value = '';
+
+  if (!rows.length) { alert('El archivo no tiene filas de datos.'); return; }
+
+  const { data: existentes } = await sb.from('productos').select('nombre').eq('activo', true);
+  const nombresExistentes = new Set((existentes || []).map(p => normalizarTexto(p.nombre)));
+
+  const vistos = new Set();
+  importPendiente = [];
+  let duplicados = 0;
+  let sinNombre = 0;
+
+  rows.forEach(row => {
+    const keys = Object.keys(row);
+    const keyNombre = keys.find(k => ['nombre','producto','name'].includes(normalizarTexto(k)));
+    const keyCategoria = keys.find(k => ['categoria','category'].includes(normalizarTexto(k)));
+    const nombre = keyNombre ? String(row[keyNombre]).trim() : '';
+    if (!nombre) { sinNombre++; return; }
+    const norm = normalizarTexto(nombre);
+    if (nombresExistentes.has(norm) || vistos.has(norm)) { duplicados++; return; }
+    vistos.add(norm);
+    importPendiente.push({ nombre, categoria: keyCategoria ? (String(row[keyCategoria]).trim() || null) : null });
+  });
+
+  const partes = [`${importPendiente.length} producto(s) nuevos para importar`];
+  if (duplicados) partes.push(`${duplicados} omitido(s) por ya existir`);
+  if (sinNombre) partes.push(`${sinNombre} fila(s) sin nombre ignorada(s)`);
+  document.getElementById('import-summary').textContent = partes.join(' · ');
+
+  document.getElementById('import-preview').innerHTML = importPendiente.length
+    ? importPendiente.slice(0, 100).map(p => `
+        <div style="padding:5px 0; border-bottom:1px solid var(--border);">
+          ${p.nombre}${p.categoria ? ` — <span style="color:var(--muted)">${p.categoria}</span>` : ''}
+        </div>
+      `).join('')
+    : '<div class="loading">No hay productos nuevos para importar.</div>';
+
+  document.getElementById('btn-confirmar-import').disabled = importPendiente.length === 0;
+  document.getElementById('modal-import').classList.add('open');
+}
+
+async function confirmarImportExcel() {
+  if (!importPendiente.length) return;
+  const btn = document.getElementById('btn-confirmar-import');
+  btn.disabled = true; btn.textContent = 'Importando...';
+  const { error } = await sb.from('productos').insert(importPendiente);
+  btn.disabled = false; btn.textContent = 'Importar';
+  if (error) { alert('Error al importar: ' + error.message); return; }
+  const cantidad = importPendiente.length;
+  importPendiente = [];
+  closeModal('modal-import');
+  await cargarProductos();
+  alert(`${cantidad} producto(s) importado(s) correctamente.`);
 }
 
 async function cargarInventario() {
@@ -1270,6 +1396,10 @@ function poblarSelectCadenas(cadenas, selectedValue = '') {
 }
 
 
+
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+}
 
 document.querySelectorAll('.modal-bg').forEach(m => m.addEventListener('click', e => { if (e.target === m) m.classList.remove('open'); }));
 document.querySelectorAll('.modal').forEach(m => m.addEventListener('click', e => e.stopPropagation()));
