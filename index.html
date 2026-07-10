@@ -295,7 +295,7 @@ tr:hover td { background: var(--bg); }
   </div>
 
   <div style="font-size:12px; color:var(--muted); margin-bottom:10px;">
-    El Excel debe tener una columna <strong>nombre</strong> (o "producto") y opcionalmente <strong>categoria</strong>. La primera fila debe ser el encabezado.
+    El Excel debe tener una columna <strong>nombre</strong> (o "producto"/"descripción") y opcionalmente <strong>categoria</strong>. La fila del encabezado puede estar en cualquier posición, siempre que sea la primera fila con datos de la hoja.
   </div>
 
   <div class="card" style="padding:0; overflow:hidden; margin-bottom:24px;">
@@ -1298,10 +1298,24 @@ async function previewImportExcel(input) {
   const buf = await file.arrayBuffer();
   const wb = XLSX.read(buf, { type: 'array' });
   const sheet = wb.Sheets[wb.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+  const filas = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
   input.value = '';
 
-  if (!rows.length) { alert('El archivo no tiene filas de datos.'); return; }
+  if (!filas.length) { alert('El archivo no tiene filas de datos.'); return; }
+
+  // Busca la fila de encabezado real (puede no ser la primera si hay filas/columnas en blanco antes)
+  const aliasNombre = ['nombre','producto','name','descripcion','description'];
+  const aliasCategoria = ['categoria','category'];
+  let headerIdx = -1, colNombre = -1, colCategoria = -1;
+  for (let i = 0; i < Math.min(filas.length, 20); i++) {
+    const idx = filas[i].findIndex(c => aliasNombre.includes(normalizarTexto(c)));
+    if (idx !== -1) { headerIdx = i; colNombre = idx; colCategoria = filas[i].findIndex(c => aliasCategoria.includes(normalizarTexto(c))); break; }
+  }
+
+  if (headerIdx === -1) {
+    alert('No encontré una columna de nombre/producto/descripción en el archivo. Revisa que la fila de encabezado tenga una columna con ese nombre.');
+    return;
+  }
 
   const { data: existentes } = await sb.from('productos').select('nombre').eq('activo', true);
   const nombresExistentes = new Set((existentes || []).map(p => normalizarTexto(p.nombre)));
@@ -1311,16 +1325,14 @@ async function previewImportExcel(input) {
   let duplicados = 0;
   let sinNombre = 0;
 
-  rows.forEach(row => {
-    const keys = Object.keys(row);
-    const keyNombre = keys.find(k => ['nombre','producto','name'].includes(normalizarTexto(k)));
-    const keyCategoria = keys.find(k => ['categoria','category'].includes(normalizarTexto(k)));
-    const nombre = keyNombre ? String(row[keyNombre]).trim() : '';
+  filas.slice(headerIdx + 1).forEach(fila => {
+    const nombre = fila[colNombre] !== undefined ? String(fila[colNombre]).trim() : '';
     if (!nombre) { sinNombre++; return; }
     const norm = normalizarTexto(nombre);
     if (nombresExistentes.has(norm) || vistos.has(norm)) { duplicados++; return; }
     vistos.add(norm);
-    importPendiente.push({ nombre, categoria: keyCategoria ? (String(row[keyCategoria]).trim() || null) : null });
+    const categoria = colCategoria !== -1 && fila[colCategoria] !== undefined ? String(fila[colCategoria]).trim() : '';
+    importPendiente.push({ nombre, categoria: categoria || null });
   });
 
   const partes = [`${importPendiente.length} producto(s) nuevos para importar`];
