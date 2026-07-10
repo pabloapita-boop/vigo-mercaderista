@@ -237,12 +237,31 @@ tr:hover td { background: var(--bg); }
     <input type="month" id="filtro-mes-c" onchange="cargarControl()">
   </div>
 
-  <div class="stats-grid" id="stats-control">
+  <div class="stats-grid" id="stats-control" style="grid-template-columns: repeat(5, 1fr);">
     <div class="stat-card"><div class="stat-num" id="stat-visitas">—</div><div class="stat-label">Visitas realizadas</div></div>
     <div class="stat-card"><div class="stat-num" id="stat-oc">—</div><div class="stat-label">OC emitidas</div></div>
     <div class="stat-card"><div class="stat-num" id="stat-pedidos">—</div><div class="stat-label">Con pedido</div></div>
     <div class="stat-card"><div class="stat-num" id="stat-pdvs">—</div><div class="stat-label">PDV atendidos</div></div>
+    <div class="stat-card"><div class="stat-num" id="stat-pdvs-sin-visitar" style="color:#dc2626;">—</div><div class="stat-label">PDV sin visitar</div></div>
   </div>
+
+  <div class="card" id="card-no-visitados" style="padding:0; overflow:hidden; border-color:#fecaca;">
+    <div class="card-title" style="padding:16px 16px 0; margin-bottom:8px; color:#dc2626;">⚠️ Puntos no visitados este mes</div>
+    <table>
+      <thead>
+        <tr>
+          <th>PDV</th>
+          <th>Cadena</th>
+          <th>Zona</th>
+        </tr>
+      </thead>
+      <tbody id="tabla-no-visitados">
+        <tr><td colspan="3" class="loading">Selecciona un mes</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div style="height:20px;"></div>
 
   <div class="card" style="padding:0; overflow:hidden;">
     <table>
@@ -250,7 +269,7 @@ tr:hover td { background: var(--bg); }
         <tr>
           <th>PDV</th>
           <th>Cadena</th>
-          <th>Visitas en el mes</th>
+          <th onclick="toggleSortControl()" style="cursor:pointer; user-select:none;" title="Clic para ordenar">Visitas en el mes <span id="sort-icon-control">▼</span></th>
           <th>OC emitidas</th>
           <th>Última visita</th>
           <th>Frecuencia</th>
@@ -1091,6 +1110,9 @@ async function eliminarVisita(id) {
 }
 
 // ===== CONTROL =====
+let controlRowsCache = [];
+let controlSortAsc = false;
+
 async function cargarControl() {
   const mes = document.getElementById('filtro-mes-c').value;
   const cadena = document.getElementById('filtro-cadena-c').value;
@@ -1114,24 +1136,23 @@ async function cargarControl() {
 
   document.getElementById('stat-pdvs').textContent = Object.keys(porPDV).length;
 
-  const rows = Object.values(porPDV).sort((a,b) => b.visitas.length - a.visitas.length);
-  const tbody = document.getElementById('tabla-control');
-  if (!rows.length) { tbody.innerHTML = '<tr><td colspan="6" class="loading">Sin datos para este mes</td></tr>'; return; }
+  // Puntos no visitados: todos los PDV activos que no aparecen en ninguna visita del mes
+  let qPdv = sb.from('pdv').select('*').eq('activo', true);
+  const { data: pdvsData } = await qPdv;
+  let todosPdv = pdvsData || [];
+  if (cadena) todosPdv = todosPdv.filter(p => p.cadena === cadena);
+  const noVisitados = todosPdv.filter(p => !porPDV[p.id]).sort((a,b) => a.nombre.localeCompare(b.nombre));
 
-  tbody.innerHTML = rows.map(r => {
-    const ultima = r.visitas.sort().reverse()[0];
-    const freq = r.visitas.length >= 4 ? '<span class="badge badge-green">Semanal</span>' :
-                 r.visitas.length >= 2 ? '<span class="badge badge-blue">Quincenal</span>' :
-                 '<span class="badge badge-gray">Mensual</span>';
-    return `<tr>
-      <td>${r.nombre}</td>
-      <td>${r.cadena}</td>
-      <td style="text-align:center;">${r.visitas.length}</td>
-      <td style="text-align:center;">${r.oc}</td>
-      <td>${ultima}</td>
-      <td>${freq}</td>
-    </tr>`;
-  }).join('');
+  document.getElementById('stat-pdvs-sin-visitar').textContent = noVisitados.length;
+
+  const tbodyNV = document.getElementById('tabla-no-visitados');
+  document.getElementById('card-no-visitados').style.display = noVisitados.length ? 'block' : 'none';
+  tbodyNV.innerHTML = noVisitados.length
+    ? noVisitados.map(p => `<tr><td>${p.nombre}</td><td>${p.cadena}</td><td>${p.zona || '—'}</td></tr>`).join('')
+    : '';
+
+  controlRowsCache = Object.values(porPDV);
+  renderTablaControl();
 
   // Entregas confirmadas — separado de las visitas de gestión
   const { data: entregasData } = await sb.from('entregas')
@@ -1158,6 +1179,36 @@ async function cargarControl() {
       </tr>
     `).join('');
   }
+}
+
+function toggleSortControl() {
+  controlSortAsc = !controlSortAsc;
+  document.getElementById('sort-icon-control').textContent = controlSortAsc ? '▲' : '▼';
+  renderTablaControl();
+}
+
+function renderTablaControl() {
+  const rows = [...controlRowsCache].sort((a, b) =>
+    controlSortAsc ? a.visitas.length - b.visitas.length : b.visitas.length - a.visitas.length
+  );
+  const tbody = document.getElementById('tabla-control');
+  if (!rows.length) { tbody.innerHTML = '<tr><td colspan="6" class="loading">Sin datos para este mes</td></tr>'; return; }
+
+  tbody.innerHTML = rows.map(r => {
+    const ultima = [...r.visitas].sort().reverse()[0];
+    const freq = r.visitas.length >= 4 ? '<span class="badge badge-green">Semanal</span>' :
+                 r.visitas.length >= 2 ? '<span class="badge badge-blue">Quincenal</span>' :
+                 '<span class="badge badge-gray">Mensual</span>';
+    const ocCell = r.oc > 0 ? `${r.oc}` : `0 <span class="badge badge-red">Sin OC</span>`;
+    return `<tr>
+      <td>${r.nombre}</td>
+      <td>${r.cadena}</td>
+      <td style="text-align:center;">${r.visitas.length}</td>
+      <td style="text-align:center;">${ocCell}</td>
+      <td>${ultima}</td>
+      <td>${freq}</td>
+    </tr>`;
+  }).join('');
 }
 
 // ===== PDVs =====
