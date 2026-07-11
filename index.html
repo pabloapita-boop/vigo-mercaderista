@@ -570,7 +570,7 @@ async function init() {
   setDefaultFecha();
   await cargarPDVPool();
   await cargarCadenas();
-  await cargarEntregasPendientes();
+  await actualizarFechas();
   setDefaultMes('filtro-mes-v');
   setDefaultMes('filtro-mes-c');
 }
@@ -586,7 +586,6 @@ function setDefaultFecha() {
   const d = nextMon.getDay();
   nextMon.setDate(nextMon.getDate() + ((8 - d) % 7 || 7));
   document.getElementById('fecha-inicio').value = nextMon.toISOString().split('T')[0];
-  actualizarFechas();
 }
 
 function setDefaultMes(id) {
@@ -594,7 +593,31 @@ function setDefaultMes(id) {
   document.getElementById(id).value = hoy.toISOString().slice(0,7);
 }
 
-function actualizarFechas() { cargarEntregasPendientes(); }
+async function actualizarFechas() {
+  const inicio = document.getElementById('fecha-inicio').value;
+  await cargarRutaExistente(inicio);
+  const assigned = Object.values(state.days).flat().filter(p => p.kind !== 'entrega').map(p => p.id);
+  state.pool = allPDVs.filter(p => !assigned.includes(p.id));
+  renderPool();
+  await cargarEntregasPendientes();
+}
+
+async function cargarRutaExistente(inicio) {
+  DIAS.forEach(d => state.days[d] = []);
+  rutaActualId = null;
+  if (!inicio) return;
+
+  const { data: rutas } = await sb.from('rutas')
+    .select('*')
+    .eq('semana_inicio', inicio)
+    .order('created_at', { ascending: true });
+  if (!rutas || !rutas.length) return;
+
+  const ruta = rutas[0];
+  rutaActualId = ruta.id;
+  const { data: items } = await sb.from('ruta_items').select('*, pdv(*)').eq('ruta_id', ruta.id).order('orden');
+  items?.forEach(item => { if (item.pdv) state.days[item.dia].push(item.pdv); });
+}
 
 function isoDeDia(dia) {
   const inicio = document.getElementById('fecha-inicio').value;
@@ -826,14 +849,31 @@ async function guardarRuta() {
   if (!inicio) return alert('Selecciona la fecha de inicio de la semana.');
   const fin = new Date(inicio + 'T12:00:00');
   fin.setDate(fin.getDate() + 5);
+  const finStr = fin.toISOString().split('T')[0];
 
-  const { data: ruta, error } = await sb.from('rutas').insert({
-    semana_inicio: inicio,
-    semana_fin: fin.toISOString().split('T')[0]
-  }).select().single();
+  // Reutilizar la ruta de esta semana si ya existe, en vez de crear una duplicada cada vez
+  const { data: existentes, error: errBuscar } = await sb.from('rutas')
+    .select('id')
+    .eq('semana_inicio', inicio)
+    .order('created_at', { ascending: true });
+  if (errBuscar) { alert('Error al guardar: ' + errBuscar.message); return; }
 
-  if (error) { alert('Error al guardar: ' + error.message); return; }
-  rutaActualId = ruta.id;
+  let rutaId;
+  if (existentes && existentes.length) {
+    rutaId = existentes[0].id;
+    await sb.from('ruta_items').delete().eq('ruta_id', rutaId);
+    // Limpia duplicados de saves anteriores afectados por este mismo bug, si los hubiera
+    const idsDuplicados = existentes.slice(1).map(r => r.id);
+    if (idsDuplicados.length) {
+      await sb.from('ruta_items').delete().in('ruta_id', idsDuplicados);
+      await sb.from('rutas').delete().in('id', idsDuplicados);
+    }
+  } else {
+    const { data: nueva, error } = await sb.from('rutas').insert({ semana_inicio: inicio, semana_fin: finStr }).select().single();
+    if (error) { alert('Error al guardar: ' + error.message); return; }
+    rutaId = nueva.id;
+  }
+  rutaActualId = rutaId;
 
   const items = [];
   const entregaUpdates = [];
@@ -842,12 +882,15 @@ async function guardarRuta() {
       if (pdv.kind === 'entrega') {
         entregaUpdates.push({ id: pdv.id, fecha_entrega: pdv.fecha_entrega || isoDeDia(dia), orden: i+1 });
       } else if (!pdv.id.startsWith('manual-')) {
-        items.push({ ruta_id: ruta.id, pdv_id: pdv.id, dia, orden: i+1 });
+        items.push({ ruta_id: rutaId, pdv_id: pdv.id, dia, orden: i+1 });
       }
     });
   });
 
-  if (items.length > 0) await sb.from('ruta_items').insert(items);
+  if (items.length > 0) {
+    const { error: errItems } = await sb.from('ruta_items').insert(items);
+    if (errItems) { alert('Error al guardar los puntos de la ruta: ' + errItems.message); return; }
+  }
   if (entregaUpdates.length > 0) {
     await Promise.all(entregaUpdates.map(u => sb.from('entregas').update({ fecha_entrega: u.fecha_entrega, orden: u.orden }).eq('id', u.id)));
   }
