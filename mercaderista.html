@@ -180,6 +180,13 @@ select:focus, input[type="date"]:focus, input[type="number"]:focus { outline: no
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
 .bottom-space { height: 50px; }
+
+/* WEEK NAV */
+.week-nav { display: flex; align-items: center; justify-content: space-between; padding: 0 2px 8px; }
+.week-nav-btn { background: rgba(255,255,255,0.1); border: none; color: white; width: 30px; height: 30px; border-radius: 8px; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.week-nav-btn:active { background: rgba(255,255,255,0.2); }
+.week-nav-label { font-size: 12px; color: #ccc; font-weight: 500; text-align: center; flex: 1; }
+.week-nav-hoy { background: var(--orange); border: none; color: white; font-size: 11px; font-weight: 700; padding: 5px 10px; border-radius: 8px; cursor: pointer; margin-left: 8px; }
 </style>
 </head>
 <body>
@@ -191,6 +198,12 @@ select:focus, input[type="date"]:focus, input[type="number"]:focus { outline: no
       <div class="header-date-day" id="hdr-dia"></div>
       <div class="header-date-full" id="hdr-fecha"></div>
     </div>
+  </div>
+  <div class="week-nav">
+    <button class="week-nav-btn" onclick="cambiarSemana(-1)">‹</button>
+    <div class="week-nav-label" id="week-label"></div>
+    <button class="week-nav-btn" onclick="cambiarSemana(1)">›</button>
+    <button class="week-nav-hoy" id="btn-semana-hoy" onclick="irASemanaActual()" style="display:none;">Hoy</button>
   </div>
   <div class="week-tabs" id="week-tabs"></div>
 </div>
@@ -230,6 +243,7 @@ let entregasPorDia = {};
 let productosCatalogo = [];
 let diaActivo = '';
 let todayStr = '';
+let semanaInicioActual = '';
 
 function hoy() {
   return new Date().toISOString().split('T')[0];
@@ -246,22 +260,60 @@ function toast(msg) {
   setTimeout(() => t.classList.remove('show'), 2500);
 }
 
+// Lunes de la semana real de hoy (domingo cuenta como el lunes siguiente, ya que la ruta es Lun-Sáb)
+function calcularSemanaInicioDeHoy() {
+  const dow = new Date().getDay();
+  const diffLunes = dow === 0 ? 1 : 1 - dow;
+  const lunes = new Date();
+  lunes.setDate(lunes.getDate() + diffLunes);
+  return lunes.toISOString().split('T')[0];
+}
+
+function formatearRangoSemana(inicioISO) {
+  const base = new Date(inicioISO + 'T12:00:00');
+  const fin = new Date(base);
+  fin.setDate(fin.getDate() + 5);
+  const fmt = (d) => d.toLocaleDateString('es-PA', { day: 'numeric', month: 'short' });
+  return `${fmt(base)} – ${fmt(fin)}`;
+}
+
+function cambiarSemana(delta) {
+  const base = new Date(semanaInicioActual + 'T12:00:00');
+  base.setDate(base.getDate() + delta * 7);
+  cargarSemana(base.toISOString().split('T')[0]);
+}
+
+function irASemanaActual() {
+  cargarSemana(calcularSemanaInicioDeHoy());
+}
+
 async function init() {
   todayStr = hoy();
-  const diaDeHoy = diaHoy();
-
-  document.getElementById('hdr-dia').textContent = diaDeHoy;
+  document.getElementById('hdr-dia').textContent = diaHoy();
   document.getElementById('hdr-fecha').textContent = new Date().toLocaleDateString('es-PA', { day:'numeric', month:'long', year:'numeric' });
 
-  // Find this week's ruta
+  const { data: productos } = await sb.from('productos').select('*').eq('activo', true).order('nombre');
+  productosCatalogo = productos || [];
+
+  await cargarSemana(calcularSemanaInicioDeHoy());
+}
+
+async function cargarSemana(inicioISO) {
+  semanaInicioActual = inicioISO;
+  document.getElementById('week-label').textContent = formatearRangoSemana(inicioISO);
+  const esSemanaActual = inicioISO === calcularSemanaInicioDeHoy();
+  document.getElementById('btn-semana-hoy').style.display = esSemanaActual ? 'none' : 'inline-block';
+
   const { data: rutas } = await sb.from('rutas')
     .select('*')
-    .lte('semana_inicio', todayStr)
-    .gte('semana_fin', todayStr)
-    .order('semana_inicio', { ascending: false })
+    .eq('semana_inicio', inicioISO)
+    .order('created_at', { ascending: true })
     .limit(1);
 
   if (!rutas?.length) {
+    ruta = null;
+    document.getElementById('week-tabs').innerHTML = '';
+    document.getElementById('progress-section').style.display = 'none';
     document.getElementById('main-content').innerHTML = `<div class="empty-day"><div class="icon">📋</div><p>No hay ruta programada para esta semana.</p></div>`;
     return;
   }
@@ -314,9 +366,6 @@ async function init() {
     });
   }
 
-  const { data: productos } = await sb.from('productos').select('*').eq('activo', true).order('nombre');
-  productosCatalogo = productos || [];
-
   // Load pending (unconfirmed) entregas due this week, regardless of which day they were created
   DIAS_RUTA.forEach(d => { entregasPorDia[d] = []; });
   const { data: entregas } = await sb.from('entregas')
@@ -331,8 +380,9 @@ async function init() {
     if (dia) entregasPorDia[dia].push(e);
   });
 
-  // Set active tab to today (or Monday if weekend)
-  diaActivo = DIAS_RUTA.includes(diaDeHoy) ? diaDeHoy : 'Lunes';
+  // Set active tab to today solo si estamos viendo la semana real actual; si no, arranca en Lunes
+  const diaDeHoy = diaHoy();
+  diaActivo = (esSemanaActual && DIAS_RUTA.includes(diaDeHoy)) ? diaDeHoy : 'Lunes';
 
   renderTabs();
   renderDia(diaActivo);
