@@ -247,8 +247,17 @@ let diaActivo = '';
 let todayStr = '';
 let semanaInicioActual = '';
 
+// YYYY-MM-DD en hora LOCAL, no UTC — toISOString() convierte a UTC y en Panama (UTC-5)
+// eso adelanta la fecha un día a partir de aprox. las 7pm, rompiendo todo lo que dependa de "hoy".
+function fechaLocalISO(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 function hoy() {
-  return new Date().toISOString().split('T')[0];
+  return fechaLocalISO(new Date());
 }
 
 function diaHoy() {
@@ -268,7 +277,7 @@ function calcularSemanaInicioDeHoy() {
   const diffLunes = dow === 0 ? 1 : 1 - dow;
   const lunes = new Date();
   lunes.setDate(lunes.getDate() + diffLunes);
-  return lunes.toISOString().split('T')[0];
+  return fechaLocalISO(lunes);
 }
 
 function formatearRangoSemana(inicioISO) {

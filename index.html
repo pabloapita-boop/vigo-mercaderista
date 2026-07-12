@@ -572,6 +572,15 @@ let drag = { item: null, from: null };
 let rutaActualId = null;
 let productoMap = {}; // id -> producto object for safe editing
 
+// YYYY-MM-DD en hora LOCAL, no UTC — toISOString() convierte a UTC y en Panama (UTC-5)
+// eso adelanta la fecha un día a partir de aprox. las 7pm, dando fechas "hoy"/"mes" incorrectas.
+function fechaLocalISO(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 // ===== NAVIGATION =====
 function showPage(name) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -597,19 +606,13 @@ async function init() {
 function setDefaultFecha() {
   const hoy = new Date();
   const dia = hoy.getDay();
-  const diff = dia === 0 ? 1 : (dia === 6 ? 2 : 8 - dia + 1);
-  const lunes = new Date(hoy);
-  lunes.setDate(hoy.getDate() + (dia === 1 ? 0 : (8 - dia) % 7 || 7));
-  // Next monday
-  const nextMon = new Date();
-  const d = nextMon.getDay();
-  nextMon.setDate(nextMon.getDate() + ((8 - d) % 7 || 7));
-  document.getElementById('fecha-inicio').value = nextMon.toISOString().split('T')[0];
+  const nextMon = new Date(hoy);
+  nextMon.setDate(hoy.getDate() + ((8 - dia) % 7 || 7));
+  document.getElementById('fecha-inicio').value = fechaLocalISO(nextMon);
 }
 
 function setDefaultMes(id) {
-  const hoy = new Date();
-  document.getElementById(id).value = hoy.toISOString().slice(0,7);
+  document.getElementById(id).value = fechaLocalISO(new Date()).slice(0,7);
 }
 
 async function actualizarFechas() {
@@ -1166,7 +1169,7 @@ async function verDetalleVisita(id) {
 
 function openModalVisita(v = null) {
   document.getElementById('v-id').value = v?.id || '';
-  document.getElementById('v-fecha').value = v?.fecha || new Date().toISOString().split('T')[0];
+  document.getElementById('v-fecha').value = v?.fecha || fechaLocalISO(new Date());
   document.getElementById('v-pdv').value = v?.pdv_id || '';
   document.getElementById('v-tipo').value = v?.tipo_visita || 'mercadeo';
   document.getElementById('v-oc').value = v?.oc_emitida ? 'true' : 'false';
