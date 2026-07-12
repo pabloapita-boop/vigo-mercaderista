@@ -132,6 +132,12 @@ textarea:focus { outline: none; border-color: var(--orange); }
 .btn-save.saved { background: var(--green); }
 .btn-save:disabled { opacity: 0.6; }
 
+/* AUTOSAVE STATUS */
+.autosave-status { text-align: center; font-size: 12px; font-weight: 600; padding: 10px; margin-top: 8px; border-radius: 10px; background: #F0FDF4; color: #15803D; transition: all 0.2s; }
+.autosave-status.pendiente { background: #F3F4F6; color: var(--muted); }
+.autosave-status.guardando { background: #FFFBEB; color: #92400E; }
+.autosave-status.error { background: #FEE2E2; color: #991B1B; }
+
 /* INVENTARIO */
 select, input[type="date"], input[type="number"] { width: 100%; padding: 10px 12px; border: 1.5px solid var(--border); border-radius: 10px; font-size: 14px; font-family: inherit; background: white; color: var(--text); }
 select:focus, input[type="date"]:focus, input[type="number"]:focus { outline: none; border-color: var(--orange); }
@@ -516,7 +522,7 @@ function renderCard(item, idx, visita, color, isToday, fechaDia) {
   return `
     <div class="pdv-card ${done ? 'completado' : ''}" id="card-${pdv.id}">
       <div class="pdv-header" onclick="toggleCard('${pdv.id}')">
-        <div class="pdv-num ${done ? 'done' : ''}" style="${done ? '' : `background:linear-gradient(135deg,${color},#5B2D8E)`}">${done ? '✓' : idx+1}</div>
+        <div class="pdv-num ${done ? 'done' : ''}" data-idx="${idx+1}" data-color="${color}" style="${done ? '' : `background:linear-gradient(135deg,${color},#5B2D8E)`}">${done ? '✓' : idx+1}</div>
         <div class="pdv-info">
           <div class="pdv-nombre">${pdv.nombre}</div>
           <div class="pdv-cadena">${pdv.cadena}</div>
@@ -555,6 +561,7 @@ function renderCard(item, idx, visita, color, isToday, fechaDia) {
           <div class="seg-control">
             <button class="seg-btn ${visita?.tipo_visita === 'mercadeo' || !visita?.tipo_visita ? 'active' : ''}" onclick="setVal('${pdv.id}','tipo_visita','mercadeo','${fechaDia}')" ${!isToday?'disabled':''}>Solo mercadeo</button>
             <button class="seg-btn ${visita?.tipo_visita === 'mercadeo_pedido' ? 'active' : ''}" onclick="setVal('${pdv.id}','tipo_visita','mercadeo_pedido','${fechaDia}')" ${!isToday?'disabled':''}>Mercadeo + pedido</button>
+            <button class="seg-btn ${visita?.tipo_visita === 'recepcion_mercadeo' ? 'active' : ''}" onclick="setVal('${pdv.id}','tipo_visita','recepcion_mercadeo','${fechaDia}')" ${!isToday?'disabled':''}>Recepción + mercadeo</button>
           </div>
         </div>
 
@@ -627,9 +634,7 @@ function renderCard(item, idx, visita, color, isToday, fechaDia) {
           <textarea id="obs-${pdv.id}" placeholder="Estado del anaquel, incidencias..." ${!isToday?'disabled':''} onblur="setObs('${pdv.id}','${fechaDia}')">${visita?.observaciones || ''}</textarea>
         </div>
 
-        ${isToday ? `<button class="btn-save ${done ? 'saved' : ''}" id="btn-${pdv.id}" onclick="guardar('${pdv.id}','${fechaDia}')">
-          ${done ? '✓ Guardado' : 'Guardar visita'}
-        </button>` : ''}
+        ${isToday ? `<div class="autosave-status ${visita?.id ? '' : 'pendiente'}" id="autosave-${pdv.id}">${visita?.id ? '✓ Guardado automáticamente' : 'Los cambios se guardan solos'}</div>` : ''}
       </div>
     </div>
   `;
@@ -654,45 +659,172 @@ function getLocal(pdvId, fechaDia) {
   return visitasPorDia[dia][pdvId];
 }
 
-function setVal(pdvId, key, val, fechaDia) {
+const TIPO_VISITA_VALUES = ['mercadeo', 'mercadeo_pedido', 'recepcion_mercadeo'];
+
+function mostrarEstadoGuardado(pdvId, estado) {
+  const el = document.getElementById('autosave-' + pdvId);
+  if (!el) return;
+  el.className = 'autosave-status' + (estado === 'ok' ? '' : ' ' + estado);
+  el.textContent = estado === 'guardando' ? 'Guardando…'
+    : estado === 'error' ? '⚠ Sin conexión — no se guardó, vuelve a intentar'
+    : '✓ Guardado automáticamente';
+}
+
+let visitaCreacionEnCurso = {}; // pdvId -> Promise, evita crear duplicados si dos cambios llegan casi juntos
+
+async function asegurarVisitaId(pdvId, fechaDia) {
+  const v = getLocal(pdvId, fechaDia);
+  if (v.id) return v.id;
+  if (visitaCreacionEnCurso[pdvId]) return visitaCreacionEnCurso[pdvId];
+
+  visitaCreacionEnCurso[pdvId] = (async () => {
+    const { data: inserted, error } = await sb.from('visitas').insert({
+      pdv_id: pdvId, ruta_id: ruta.id, fecha: fechaDia,
+      visitado: false, tipo_visita: 'mercadeo', oc_emitida: false, mercancia_deposito: false,
+    }).select().single();
+    delete visitaCreacionEnCurso[pdvId];
+    if (error) throw error;
+    v.id = inserted.id;
+    return inserted.id;
+  })();
+
+  return visitaCreacionEnCurso[pdvId];
+}
+
+async function autoguardarVisita(pdvId, fechaDia) {
+  const v = getLocal(pdvId, fechaDia);
+  mostrarEstadoGuardado(pdvId, 'guardando');
+
+  try {
+    await asegurarVisitaId(pdvId, fechaDia);
+  } catch (e) {
+    mostrarEstadoGuardado(pdvId, 'error');
+    return false;
+  }
+
+  const data = {
+    visitado: v.visitado || false,
+    tipo_visita: v.tipo_visita || 'mercadeo',
+    oc_emitida: v.oc_emitida || false,
+    fecha_entrega: v.oc_emitida ? (v.fecha_entrega || null) : null,
+    mercancia_deposito: v.mercancia_deposito || false,
+    observaciones: v.observaciones || null,
+    fotos: v.fotos || [],
+    hora_llegada: v.hora_llegada || null,
+  };
+
+  const { error } = await sb.from('visitas').update(data).eq('id', v.id);
+  if (error) { mostrarEstadoGuardado(pdvId, 'error'); return false; }
+
+  if (data.oc_emitida && data.fecha_entrega) {
+    const entregaPayload = { visita_id: v.id, pdv_id: pdvId, fecha_entrega: data.fecha_entrega, confirmada: false };
+    if (v.entrega_id) {
+      await sb.from('entregas').update(entregaPayload).eq('id', v.entrega_id);
+    } else {
+      const { data: insEntrega } = await sb.from('entregas').insert(entregaPayload).select().single();
+      if (insEntrega) v.entrega_id = insEntrega.id;
+    }
+  }
+
+  mostrarEstadoGuardado(pdvId, 'ok');
+  return true;
+}
+
+async function autoguardarInventario(pdvId, fechaDia) {
+  const v = getLocal(pdvId, fechaDia);
+  mostrarEstadoGuardado(pdvId, 'guardando');
+
+  try {
+    await asegurarVisitaId(pdvId, fechaDia);
+  } catch (e) {
+    mostrarEstadoGuardado(pdvId, 'error');
+    return;
+  }
+
+  await sb.from('visita_inventario').delete().eq('visita_id', v.id);
+  let error;
+  if (v.inventario && v.inventario.length) {
+    const rows = v.inventario.map(it => ({
+      visita_id: v.id, pdv_id: pdvId, fecha: fechaDia,
+      producto_id: it.producto_id,
+      unidades_anaquel: it.unidades_anaquel || 0,
+      unidades_deposito: it.unidades_deposito || 0,
+    }));
+    ({ error } = await sb.from('visita_inventario').insert(rows));
+  }
+  mostrarEstadoGuardado(pdvId, error ? 'error' : 'ok');
+}
+
+function actualizarNumeracionTarjeta(pdvId) {
+  const v = visitasPorDia[diaActivo][pdvId];
+  const card = document.getElementById('card-' + pdvId);
+  if (!card) return;
+  const num = card.querySelector('.pdv-num');
+  if (v?.visitado) {
+    card.classList.add('completado');
+    if (num) { num.textContent = '✓'; num.className = 'pdv-num done'; }
+  } else {
+    card.classList.remove('completado');
+    if (num) {
+      num.textContent = num.dataset.idx;
+      num.className = 'pdv-num';
+      num.style.background = `linear-gradient(135deg,${num.dataset.color},#5B2D8E)`;
+    }
+  }
+  const items = rutaItemsPorDia[diaActivo];
+  if (items && items.length) {
+    const completados = items.filter(i => visitasPorDia[diaActivo][i.pdv_id]?.visitado).length;
+    document.getElementById('progress-text').textContent = `${completados} / ${items.length}`;
+    document.getElementById('progress-fill').style.width = Math.round(completados/items.length*100)+'%';
+  }
+  renderTabs();
+}
+
+async function setVal(pdvId, key, val, fechaDia) {
   getLocal(pdvId, fechaDia)[key] = val;
   // Update button states visually
   const form = document.getElementById('form-' + pdvId);
-  if (!form) return;
-  if (key === 'visitado') {
-    form.querySelectorAll('.yn-group')[0]?.querySelectorAll('.yn-btn').forEach((b,i) => {
-      b.className = 'yn-btn' + (i===0&&val===true?' yes':i===1&&val===false?' no':'');
-    });
-  } else if (key === 'oc_emitida') {
-    form.querySelectorAll('.yn-group')[1]?.querySelectorAll('.yn-btn').forEach((b,i) => {
-      b.className = 'yn-btn' + (i===0&&val===true?' yes':i===1&&val===false?' no':'');
-    });
-    const group = document.getElementById('entrega-fecha-group-' + pdvId);
-    if (group) group.style.display = val ? '' : 'none';
-  } else if (key === 'mercancia_deposito') {
-    form.querySelectorAll('.yn-group')[2]?.querySelectorAll('.yn-btn').forEach((b,i) => {
-      b.className = 'yn-btn' + (i===0&&val===true?' yes':i===1&&val===false?' no':'');
-    });
-  } else if (key === 'tipo_visita') {
-    form.querySelectorAll('.seg-btn').forEach((b,i) => {
-      b.className = 'seg-btn' + ((i===0&&val==='mercadeo')||(i===1&&val==='mercadeo_pedido')?' active':'');
-    });
+  if (form) {
+    if (key === 'visitado') {
+      form.querySelectorAll('.yn-group')[0]?.querySelectorAll('.yn-btn').forEach((b,i) => {
+        b.className = 'yn-btn' + (i===0&&val===true?' yes':i===1&&val===false?' no':'');
+      });
+    } else if (key === 'oc_emitida') {
+      form.querySelectorAll('.yn-group')[1]?.querySelectorAll('.yn-btn').forEach((b,i) => {
+        b.className = 'yn-btn' + (i===0&&val===true?' yes':i===1&&val===false?' no':'');
+      });
+      const group = document.getElementById('entrega-fecha-group-' + pdvId);
+      if (group) group.style.display = val ? '' : 'none';
+    } else if (key === 'mercancia_deposito') {
+      form.querySelectorAll('.yn-group')[2]?.querySelectorAll('.yn-btn').forEach((b,i) => {
+        b.className = 'yn-btn' + (i===0&&val===true?' yes':i===1&&val===false?' no':'');
+      });
+    } else if (key === 'tipo_visita') {
+      form.querySelectorAll('.seg-btn').forEach((b,i) => {
+        b.className = 'seg-btn' + (TIPO_VISITA_VALUES[i] === val ? ' active' : '');
+      });
+    }
   }
+  const ok = await autoguardarVisita(pdvId, fechaDia);
+  if (ok && key === 'visitado') actualizarNumeracionTarjeta(pdvId);
 }
 
-function setObs(pdvId, fechaDia) {
+async function setObs(pdvId, fechaDia) {
   getLocal(pdvId, fechaDia).observaciones = document.getElementById('obs-' + pdvId).value;
+  await autoguardarVisita(pdvId, fechaDia);
 }
 
-function setFechaEntrega(pdvId, fechaDia) {
+async function setFechaEntrega(pdvId, fechaDia) {
   getLocal(pdvId, fechaDia).fecha_entrega = document.getElementById('fecha-entrega-' + pdvId).value || null;
+  await autoguardarVisita(pdvId, fechaDia);
 }
 
-function registrarLlegada(pdvId, fechaDia) {
+async function registrarLlegada(pdvId, fechaDia) {
   const hora = new Date().toTimeString().slice(0, 5);
   getLocal(pdvId, fechaDia).hora_llegada = hora;
   const box = document.getElementById('llegada-box-' + pdvId);
   if (box) box.innerHTML = `<div class="llegada-chip">🕐 ${hora} <span class="inv-row-remove" onclick="registrarLlegada('${pdvId}','${fechaDia}')">↻</span></div>`;
+  await autoguardarVisita(pdvId, fechaDia);
   toast('Hora de llegada registrada: ' + hora);
 }
 
@@ -765,7 +897,7 @@ function limpiarSeleccionProducto(pdvId) {
   if (el) el.innerHTML = '';
 }
 
-function agregarInventario(pdvId, fechaDia) {
+async function agregarInventario(pdvId, fechaDia) {
   const p = inventarioSeleccion[pdvId];
   if (!p) { toast('Busca y selecciona un producto'); return; }
   const anaquel = parseInt(document.getElementById('inv-anaquel-' + pdvId).value) || 0;
@@ -784,14 +916,18 @@ function agregarInventario(pdvId, fechaDia) {
 
   document.getElementById('inventario-list-' + pdvId).innerHTML =
     v.inventario.map((it, i) => renderInventarioRow(pdvId, fechaDia, it, i)).join('');
+
+  await autoguardarInventario(pdvId, fechaDia);
 }
 
-function quitarInventario(pdvId, fechaDia, idx) {
+async function quitarInventario(pdvId, fechaDia, idx) {
   const v = getLocal(pdvId, fechaDia);
   if (!v.inventario) return;
   v.inventario.splice(idx, 1);
   document.getElementById('inventario-list-' + pdvId).innerHTML =
     v.inventario.map((it, i) => renderInventarioRow(pdvId, fechaDia, it, i)).join('');
+
+  await autoguardarInventario(pdvId, fechaDia);
 }
 
 async function subirFoto(pdvId, fechaDia, input) {
@@ -818,8 +954,10 @@ async function subirFoto(pdvId, fechaDia, input) {
   img.src = publicUrl;
   img.onclick = () => window.open(publicUrl, '_blank');
   area.insertBefore(img, area.querySelector('label'));
-  toast('Foto agregada ✓');
   input.value = '';
+
+  await autoguardarVisita(pdvId, fechaDia);
+  toast('Foto agregada ✓');
 }
 
 async function subirFotoEntrega(entregaId, input) {
@@ -868,76 +1006,6 @@ async function confirmarEntrega(entregaId) {
   if (card) card.classList.add('completado');
   if (btn) { btn.classList.add('saved'); btn.textContent = '✓ Entrega confirmada'; }
   toast('Entrega confirmada ✓');
-}
-
-async function guardar(pdvId, fechaDia) {
-  const btn = document.getElementById('btn-' + pdvId);
-  if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
-
-  const v = getLocal(pdvId, fechaDia);
-  v.observaciones = document.getElementById('obs-' + pdvId)?.value || '';
-
-  const data = {
-    pdv_id: pdvId, ruta_id: ruta.id, fecha: fechaDia,
-    visitado: v.visitado || false,
-    tipo_visita: v.tipo_visita || 'mercadeo',
-    oc_emitida: v.oc_emitida || false,
-    fecha_entrega: v.oc_emitida ? (v.fecha_entrega || null) : null,
-    mercancia_deposito: v.mercancia_deposito || false,
-    observaciones: v.observaciones || null,
-    fotos: v.fotos || [],
-    hora_llegada: v.hora_llegada || null,
-  };
-
-  let error, inserted;
-  if (v.id) {
-    ({ error } = await sb.from('visitas').update(data).eq('id', v.id));
-  } else {
-    ({ data: inserted, error } = await sb.from('visitas').insert(data).select().single());
-    if (inserted) { v.id = inserted.id; visitasPorDia[diaActivo][pdvId] = { ...data, id: inserted.id, entrega_id: v.entrega_id }; }
-  }
-
-  if (error) { toast('Error: ' + error.message); if(btn){btn.disabled=false;btn.textContent='Guardar visita';} return; }
-
-  if (data.oc_emitida && data.fecha_entrega) {
-    const entregaPayload = { visita_id: v.id, pdv_id: pdvId, fecha_entrega: data.fecha_entrega, confirmada: false };
-    if (v.entrega_id) {
-      await sb.from('entregas').update(entregaPayload).eq('id', v.entrega_id);
-    } else {
-      const { data: insEntrega } = await sb.from('entregas').insert(entregaPayload).select().single();
-      if (insEntrega) { v.entrega_id = insEntrega.id; visitasPorDia[diaActivo][pdvId].entrega_id = insEntrega.id; }
-    }
-  }
-
-  // Sync inventory: full replace is simplest and safe given the small row counts per visita
-  await sb.from('visita_inventario').delete().eq('visita_id', v.id);
-  if (v.inventario && v.inventario.length) {
-    const rows = v.inventario.map(it => ({
-      visita_id: v.id, pdv_id: pdvId, fecha: fechaDia,
-      producto_id: it.producto_id,
-      unidades_anaquel: it.unidades_anaquel || 0,
-      unidades_deposito: it.unidades_deposito || 0,
-    }));
-    await sb.from('visita_inventario').insert(rows);
-  }
-
-  if (btn) { btn.classList.add('saved'); btn.textContent = '✓ Guardado'; btn.disabled = false; }
-
-  // Update card header
-  const card = document.getElementById('card-' + pdvId);
-  if (card && v.visitado) {
-    card.classList.add('completado');
-    const num = card.querySelector('.pdv-num');
-    if (num) { num.textContent = '✓'; num.className = 'pdv-num done'; }
-  }
-
-  // Update progress
-  const items = rutaItemsPorDia[diaActivo];
-  const completados = items.filter(i => visitasPorDia[diaActivo][i.pdv_id]?.visitado).length;
-  document.getElementById('progress-text').textContent = `${completados} / ${items.length}`;
-  document.getElementById('progress-fill').style.width = Math.round(completados/items.length*100)+'%';
-  renderTabs();
-  toast('Visita guardada ✓');
 }
 
 init();
