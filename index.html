@@ -80,7 +80,11 @@ textarea { resize: vertical; min-height: 60px; }
 .entrega-tag { font-size: 9px; font-weight: 700; color: #9A3412; background: #FFEDD5; padding: 1px 6px; border-radius: 8px; margin-left: 6px; text-transform: uppercase; letter-spacing: 0.03em; }
 
 /* POOL */
-.pool-area { display: flex; flex-wrap: wrap; gap: 6px; min-height: 44px; padding: 10px; background: var(--bg); border: 1px dashed var(--border); border-radius: 8px; margin-bottom: 16px; }
+.pool-area { min-height: 44px; padding: 10px; background: var(--bg); border: 1px dashed var(--border); border-radius: 8px; margin-bottom: 16px; }
+.pool-grupo { margin-bottom: 10px; }
+.pool-grupo:last-child { margin-bottom: 0; }
+.pool-grupo-titulo { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+.pool-grupo-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .pool-chip { padding: 5px 10px; background: var(--card); border: 1px solid var(--border); border-radius: 20px; font-size: 12px; cursor: grab; display: flex; align-items: center; gap: 6px; }
 .pool-chip:hover { border-color: #aaa; }
 .pool-chip .remove { color: var(--muted); cursor: pointer; font-size: 13px; }
@@ -626,8 +630,7 @@ function setDefaultMes(id) {
 async function actualizarFechas() {
   const inicio = document.getElementById('fecha-inicio').value;
   await cargarRutaExistente(inicio);
-  const assigned = Object.values(state.days).flat().filter(p => p.kind !== 'entrega').map(p => p.id);
-  state.pool = allPDVs.filter(p => !assigned.includes(p.id));
+  state.pool = allPDVs;
   renderPool();
   await cargarEntregasPendientes();
 }
@@ -646,7 +649,27 @@ async function cargarRutaExistente(inicio) {
   const ruta = rutas[0];
   rutaActualId = ruta.id;
   const { data: items } = await sb.from('ruta_items').select('*, pdv(*)').eq('ruta_id', ruta.id).order('orden');
-  items?.forEach(item => { if (item.pdv) { item.pdv.nota = item.nota || null; state.days[item.dia].push(item.pdv); } });
+  items?.forEach(item => {
+    if (!item.pdv) return;
+    const instancia = crearInstanciaPDV(item.pdv);
+    instancia.nota = item.nota || null;
+    state.days[item.dia].push(instancia);
+  });
+}
+
+// Cada vez que un PDV se arrastra desde la piscina a un día se crea una "instancia"
+// propia (con su propio _instanceId) en vez de mover el PDV original — así la piscina
+// nunca se vacía y el mismo PDV puede asignarse a varios días de la misma semana.
+let instanciaContador = 0;
+function crearInstanciaPDV(pdvOriginal) {
+  instanciaContador++;
+  return { ...pdvOriginal, _instanceId: `${pdvOriginal.id}__${Date.now()}_${instanciaContador}` };
+}
+
+// Identificador único de un chip dentro de un día: las entregas usan su id real
+// (siempre son un registro único), los PDV usan su _instanceId de esta semana.
+function chipKey(item) {
+  return item.kind === 'entrega' ? item.id : item._instanceId;
 }
 
 function isoDeDia(dia) {
@@ -725,9 +748,10 @@ async function cargarPDVPool() {
   pdvMap = {};
   allPDVs.forEach(p => pdvMap[p.id] = p);
 
-  // Only add to pool PDVs not already in days (entregas don't count as "assigned")
-  const assigned = Object.values(state.days).flat().filter(p => p.kind !== 'entrega').map(p => p.id);
-  state.pool = allPDVs.filter(p => !assigned.includes(p.id));
+  // La piscina siempre muestra el catálogo completo — asignar un PDV a un día no lo
+  // saca de aquí, ya que arrastrar crea una instancia y el mismo PDV puede repetirse
+  // en varios días de la semana.
+  state.pool = allPDVs;
   renderPool();
 
   // Update PDV select in modal
@@ -760,17 +784,38 @@ function renderPool() {
   const pool = document.getElementById('pool');
   pool.innerHTML = '';
   if (state.pool.length === 0) {
-    pool.innerHTML = '<span style="color:#ccc;font-size:12px;">✓ Todos asignados</span>';
+    pool.innerHTML = '<span style="color:#ccc;font-size:12px;">Sin PDV para mostrar</span>';
     return;
   }
+
+  const grupos = {};
   state.pool.forEach(pdv => {
-    const el = document.createElement('div');
-    el.className = 'pool-chip';
-    el.draggable = true;
-    el.innerHTML = `<span>${pdv.nombre}</span><span class="remove" onclick="removeFromPool('${pdv.id}')">×</span>`;
-    el.ondragstart = e => { drag = { item: pdv, from: 'pool' }; setTimeout(() => el.classList.add('dragging'), 0); };
-    el.ondragend = () => el.classList.remove('dragging');
-    pool.appendChild(el);
+    const clave = pdv.cadena || 'Sin cadena';
+    if (!grupos[clave]) grupos[clave] = [];
+    grupos[clave].push(pdv);
+  });
+
+  Object.keys(grupos).sort().forEach(cadena => {
+    const grupoEl = document.createElement('div');
+    grupoEl.className = 'pool-grupo';
+    const titulo = document.createElement('div');
+    titulo.className = 'pool-grupo-titulo';
+    titulo.textContent = `${cadena} (${grupos[cadena].length})`;
+    grupoEl.appendChild(titulo);
+
+    const chipsEl = document.createElement('div');
+    chipsEl.className = 'pool-grupo-chips';
+    grupos[cadena].forEach(pdv => {
+      const el = document.createElement('div');
+      el.className = 'pool-chip';
+      el.draggable = true;
+      el.innerHTML = `<span>${pdv.nombre}</span><span class="remove" onclick="removeFromPool('${pdv.id}')">×</span>`;
+      el.ondragstart = e => { drag = { item: pdv, from: 'pool' }; setTimeout(() => el.classList.add('dragging'), 0); };
+      el.ondragend = () => el.classList.remove('dragging');
+      chipsEl.appendChild(el);
+    });
+    grupoEl.appendChild(chipsEl);
+    pool.appendChild(grupoEl);
   });
 }
 
@@ -786,10 +831,9 @@ function onPoolDrop(e) {
   document.getElementById('pool').style.borderColor = '';
   if (!drag.item || drag.from === 'pool') return;
   if (drag.item.kind === 'entrega') { drag = { item: null, from: null }; return; }
-  state.days[drag.from] = state.days[drag.from].filter(p => p.id !== drag.item.id);
-  state.pool.push(drag.item);
+  // La piscina ya tiene el PDV siempre — soltar aquí solo quita esta instancia del día
+  state.days[drag.from] = state.days[drag.from].filter(p => chipKey(p) !== chipKey(drag.item));
   drag = { item: null, from: null };
-  renderPool();
   renderSemana();
 }
 
@@ -822,7 +866,7 @@ function renderSemana() {
       chip.draggable = true;
       chip.innerHTML = isEntrega
         ? `<span class="pdv-seq">${idx+1}</span><span class="entrega-icon">🚚</span><span class="pdv-name">${pdv.nombre}<span class="entrega-tag">Entrega</span></span>`
-        : `<span class="pdv-seq">${idx+1}</span><span class="pdv-name" title="Clic para agregar/editar instrucción" onclick="abrirNotaParada('${pdv.id}','${dia}')">${pdv.nota ? '📋 ' : ''}${pdv.nombre}</span><span class="pdv-remove" onclick="devolverAlPool('${pdv.id}','${dia}')">×</span>`;
+        : `<span class="pdv-seq">${idx+1}</span><span class="pdv-name" title="Clic para agregar/editar instrucción" onclick="abrirNotaParada('${pdv._instanceId}','${dia}')">${pdv.nota ? '📋 ' : ''}${pdv.nombre}</span><span class="pdv-remove" onclick="quitarInstanciaDeDia('${pdv._instanceId}','${dia}')">×</span>`;
       chip.ondragstart = e => { drag = { item: pdv, from: dia, idx }; setTimeout(() => chip.classList.add('dragging'), 0); e.stopPropagation(); };
       chip.ondragend = () => chip.classList.remove('dragging');
       chip.ondragover = e => { e.preventDefault(); e.stopPropagation(); chip.style.borderTop = `2px solid ${COLORES[dia]}`; };
@@ -830,7 +874,8 @@ function renderSemana() {
       chip.ondrop = e => {
         e.preventDefault(); e.stopPropagation();
         chip.style.borderTop = '';
-        if (!drag.item || drag.item.id === pdv.id) return;
+        if (!drag.item) return;
+        if (drag.from !== 'pool' && chipKey(drag.item) === chipKey(pdv)) return;
         moverPDV(drag.item, drag.from, dia, idx);
       };
       body.appendChild(chip);
@@ -845,49 +890,54 @@ function onDiaDrop(e, dia) {
   e.preventDefault();
   document.getElementById('dia-'+dia).classList.remove('drag-over');
   if (!drag.item) return;
-  if (state.days[dia].find(p => p.id === drag.item.id)) return;
-  if (drag.item.kind === 'entrega' && drag.from !== dia) drag.item.fecha_entrega = isoDeDia(dia);
-  if (drag.from === 'pool') state.pool = state.pool.filter(p => p.id !== drag.item.id);
-  else state.days[drag.from] = state.days[drag.from].filter(p => p.id !== drag.item.id);
-  state.days[dia].push(drag.item);
+  if (drag.from === 'pool') {
+    // La piscina nunca se toca — arrastrar crea una instancia propia para este día
+    state.days[dia].push(crearInstanciaPDV(drag.item));
+  } else {
+    if (state.days[dia].find(p => chipKey(p) === chipKey(drag.item))) { drag = { item: null, from: null }; return; }
+    if (drag.item.kind === 'entrega' && drag.from !== dia) drag.item.fecha_entrega = isoDeDia(dia);
+    state.days[drag.from] = state.days[drag.from].filter(p => chipKey(p) !== chipKey(drag.item));
+    state.days[dia].push(drag.item);
+  }
   drag = { item: null, from: null };
-  renderPool();
   renderSemana();
 }
 
-function moverPDV(pdv, from, toDia, toIdx) {
-  if (from === 'pool') state.pool = state.pool.filter(p => p.id !== pdv.id);
-  else state.days[from] = state.days[from].filter(p => p.id !== pdv.id);
-  if (pdv.kind === 'entrega' && from !== toDia) pdv.fecha_entrega = isoDeDia(toDia);
-  if (!state.days[toDia].find(p => p.id === pdv.id)) state.days[toDia].splice(toIdx, 0, pdv);
+function moverPDV(item, from, toDia, toIdx) {
+  let itemAInsertar = item;
+  if (from === 'pool') {
+    itemAInsertar = crearInstanciaPDV(item);
+  } else {
+    state.days[from] = state.days[from].filter(p => chipKey(p) !== chipKey(item));
+    if (item.kind === 'entrega' && from !== toDia) item.fecha_entrega = isoDeDia(toDia);
+  }
+  if (!state.days[toDia].find(p => chipKey(p) === chipKey(itemAInsertar))) {
+    state.days[toDia].splice(toIdx, 0, itemAInsertar);
+  }
   drag = { item: null, from: null };
-  renderPool();
   renderSemana();
 }
 
-function devolverAlPool(id, dia) {
-  const pdv = state.days[dia].find(p => p.id === id);
-  state.days[dia] = state.days[dia].filter(p => p.id !== id);
-  if (pdv) state.pool.push(pdv);
-  renderPool();
+function quitarInstanciaDeDia(instanceId, dia) {
+  state.days[dia] = state.days[dia].filter(p => p._instanceId !== instanceId);
   renderSemana();
 }
 
-function abrirNotaParada(pdvId, dia) {
-  const pdv = state.days[dia]?.find(p => p.id === pdvId);
+function abrirNotaParada(instanceId, dia) {
+  const pdv = state.days[dia]?.find(p => p._instanceId === instanceId);
   if (!pdv) return;
   document.getElementById('nota-parada-titulo').textContent = `Instrucción para ${pdv.nombre} (${dia})`;
-  document.getElementById('nota-pdv-id').value = pdvId;
+  document.getElementById('nota-pdv-id').value = instanceId;
   document.getElementById('nota-dia').value = dia;
   document.getElementById('nota-texto').value = pdv.nota || '';
   document.getElementById('modal-nota-parada').classList.add('open');
 }
 
 function guardarNotaParada() {
-  const pdvId = document.getElementById('nota-pdv-id').value;
+  const instanceId = document.getElementById('nota-pdv-id').value;
   const dia = document.getElementById('nota-dia').value;
   const texto = document.getElementById('nota-texto').value.trim();
-  const pdv = state.days[dia]?.find(p => p.id === pdvId);
+  const pdv = state.days[dia]?.find(p => p._instanceId === instanceId);
   if (pdv) pdv.nota = texto || null;
   closeModal('modal-nota-parada');
   renderSemana();
@@ -967,9 +1017,13 @@ async function loadRutaGuardada() {
 
   const { data: items } = await sb.from('ruta_items').select('*, pdv(*)').eq('ruta_id', ruta.id).order('orden');
   DIAS.forEach(d => state.days[d] = []);
-  items?.forEach(item => { if (item.pdv) { item.pdv.nota = item.nota || null; state.days[item.dia].push(item.pdv); } });
-  const assigned = Object.values(state.days).flat().map(p => p.id);
-  state.pool = allPDVs.filter(p => !assigned.includes(p.id));
+  items?.forEach(item => {
+    if (!item.pdv) return;
+    const instancia = crearInstanciaPDV(item.pdv);
+    instancia.nota = item.nota || null;
+    state.days[item.dia].push(instancia);
+  });
+  state.pool = allPDVs;
   document.getElementById('fecha-inicio').value = ruta.semana_inicio;
   rutaActualId = ruta.id;
   renderPool();
