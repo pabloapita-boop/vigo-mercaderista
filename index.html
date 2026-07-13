@@ -60,12 +60,12 @@ textarea { resize: vertical; min-height: 60px; }
 /* SEMANA PLANNER */
 .semana-header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
 .semana-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin-bottom: 16px; }
-.dia-col { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-.dia-header { padding: 10px 12px; color: white; display: flex; justify-content: space-between; align-items: center; }
+.dia-col { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; }
+.dia-header { padding: 10px 12px; color: white; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
 .dia-nombre { font-size: 13px; font-weight: 700; }
 .dia-fecha { font-size: 10px; opacity: 0.8; }
 .dia-count { font-size: 11px; background: rgba(255,255,255,0.2); padding: 2px 7px; border-radius: 10px; }
-.dia-body { padding: 8px; min-height: 80px; }
+.dia-body { padding: 8px; min-height: 80px; flex: 1; }
 .dia-body.drag-over { background: #EEF4FF; }
 .pdv-chip { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: var(--bg); border-radius: 6px; margin-bottom: 4px; font-size: 12px; cursor: grab; border: 1px solid transparent; }
 .pdv-chip:hover { border-color: var(--border); }
