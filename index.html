@@ -615,12 +615,13 @@ async function init() {
   setDefaultMes('filtro-mes-c');
 }
 
+// Lunes de la semana real de hoy (domingo cuenta como el lunes siguiente, ya que la ruta es Lun-Sáb)
 function setDefaultFecha() {
-  const hoy = new Date();
-  const dia = hoy.getDay();
-  const nextMon = new Date(hoy);
-  nextMon.setDate(hoy.getDate() + ((8 - dia) % 7 || 7));
-  document.getElementById('fecha-inicio').value = fechaLocalISO(nextMon);
+  const dow = new Date().getDay();
+  const diffLunes = dow === 0 ? 1 : 1 - dow;
+  const lunes = new Date();
+  lunes.setDate(lunes.getDate() + diffLunes);
+  document.getElementById('fecha-inicio').value = fechaLocalISO(lunes);
 }
 
 function setDefaultMes(id) {
