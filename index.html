@@ -421,9 +421,9 @@ tr:hover td { background: var(--bg); }
     <div class="form-row cols-2">
       <div><label>Tipo de visita</label>
         <select id="v-tipo">
-          <option value="mercadeo">Solo mercadeo</option>
-          <option value="mercadeo_pedido">Mercadeo + pedido</option>
-          <option value="recepcion_mercadeo">Recepción + mercadeo</option>
+          <option value="mercadeo">Mercadeo</option>
+          <option value="mercadeo_pedido">Mercadeo + OC</option>
+          <option value="recepcion_mercadeo">Recepción + Mercadeo</option>
         </select>
       </div>
       <div><label>OC emitida</label>
@@ -578,9 +578,9 @@ let rutaActualId = null;
 let productoMap = {}; // id -> producto object for safe editing
 
 function badgeTipoVisita(tipo) {
-  if (tipo === 'mercadeo_pedido') return '<span class="badge badge-blue">Mercadeo + pedido</span>';
-  if (tipo === 'recepcion_mercadeo') return '<span class="badge badge-purple">Recepción + mercadeo</span>';
-  return '<span class="badge badge-gray">Solo mercadeo</span>';
+  if (tipo === 'mercadeo_pedido') return '<span class="badge badge-blue">Mercadeo + OC</span>';
+  if (tipo === 'recepcion_mercadeo') return '<span class="badge badge-purple">Recepción + Mercadeo</span>';
+  return '<span class="badge badge-gray">Mercadeo</span>';
 }
 
 // YYYY-MM-DD en hora LOCAL, no UTC — toISOString() convierte a UTC y en Panama (UTC-5)

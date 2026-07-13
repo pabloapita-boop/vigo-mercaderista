@@ -516,7 +516,7 @@ function renderCard(item, idx, visita, color, isToday, fechaDia) {
 
   const badges = [];
   if (visita?.oc_emitida) badges.push(`<span class="mini-badge mini-badge-blue">OC ✓</span>`);
-  if (visita?.tipo_visita === 'mercadeo_pedido') badges.push(`<span class="mini-badge mini-badge-green">Pedido</span>`);
+  if (visita?.tipo_visita === 'mercadeo_pedido') badges.push(`<span class="mini-badge mini-badge-green">OC</span>`);
   if (visita?.mercancia_deposito) badges.push(`<span class="mini-badge mini-badge-gray">Dep. ✓</span>`);
 
   return `
@@ -559,9 +559,9 @@ function renderCard(item, idx, visita, color, isToday, fechaDia) {
         <div class="form-group">
           <label>Tipo de visita</label>
           <div class="seg-control">
-            <button class="seg-btn ${visita?.tipo_visita === 'mercadeo' || !visita?.tipo_visita ? 'active' : ''}" onclick="setVal('${pdv.id}','tipo_visita','mercadeo','${fechaDia}')" ${!isToday?'disabled':''}>Solo mercadeo</button>
-            <button class="seg-btn ${visita?.tipo_visita === 'mercadeo_pedido' ? 'active' : ''}" onclick="setVal('${pdv.id}','tipo_visita','mercadeo_pedido','${fechaDia}')" ${!isToday?'disabled':''}>Mercadeo + pedido</button>
-            <button class="seg-btn ${visita?.tipo_visita === 'recepcion_mercadeo' ? 'active' : ''}" onclick="setVal('${pdv.id}','tipo_visita','recepcion_mercadeo','${fechaDia}')" ${!isToday?'disabled':''}>Recepción + mercadeo</button>
+            <button class="seg-btn ${visita?.tipo_visita === 'mercadeo' || !visita?.tipo_visita ? 'active' : ''}" onclick="setVal('${pdv.id}','tipo_visita','mercadeo','${fechaDia}')" ${!isToday?'disabled':''}>Mercadeo</button>
+            <button class="seg-btn ${visita?.tipo_visita === 'mercadeo_pedido' ? 'active' : ''}" onclick="setVal('${pdv.id}','tipo_visita','mercadeo_pedido','${fechaDia}')" ${!isToday?'disabled':''}>Mercadeo + OC</button>
+            <button class="seg-btn ${visita?.tipo_visita === 'recepcion_mercadeo' ? 'active' : ''}" onclick="setVal('${pdv.id}','tipo_visita','recepcion_mercadeo','${fechaDia}')" ${!isToday?'disabled':''}>Recepción + Mercadeo</button>
           </div>
         </div>
 
@@ -781,6 +781,10 @@ function actualizarNumeracionTarjeta(pdvId) {
 }
 
 async function setVal(pdvId, key, val, fechaDia) {
+  if (key === 'visitado' && val === true && !getLocal(pdvId, fechaDia).hora_llegada) {
+    toast('Registra la hora de llegada antes de marcar la visita como hecha');
+    return;
+  }
   getLocal(pdvId, fechaDia)[key] = val;
   // Update button states visually
   const form = document.getElementById('form-' + pdvId);
