@@ -218,13 +218,12 @@ tr:hover td { background: var(--bg); }
           <th>Hora llegada</th>
           <th>Tipo visita</th>
           <th>OC emitida</th>
-          <th>Entrega</th>
           <th>Observaciones</th>
           <th></th>
         </tr>
       </thead>
       <tbody id="tabla-visitas">
-        <tr><td colspan="9" class="loading">Cargando...</td></tr>
+        <tr><td colspan="8" class="loading">Cargando...</td></tr>
       </tbody>
     </table>
   </div>
@@ -428,14 +427,14 @@ tr:hover td { background: var(--bg); }
         </select>
       </div>
       <div><label>OC emitida</label>
-        <select id="v-oc">
+        <select id="v-oc" onchange="toggleFechaEntregaVisita()">
           <option value="false">No</option>
           <option value="true">Sí</option>
         </select>
       </div>
     </div>
     <div class="form-row cols-2">
-      <div><label>Fecha de entrega prometida</label><input type="date" id="v-entrega"></div>
+      <div id="v-entrega-group"><label>Fecha de entrega prometida</label><input type="date" id="v-entrega"></div>
       <div><label>Mercancía en depósito</label>
         <select id="v-deposito">
           <option value="false">No</option>
@@ -1176,19 +1175,18 @@ async function cargarVisitas() {
   if (cadena) visitas = visitas.filter(v => v.pdv?.cadena === cadena);
 
   const tbody = document.getElementById('tabla-visitas');
-  if (!visitas.length) { tbody.innerHTML = '<tr><td colspan="9" class="loading">Sin visitas registradas</td></tr>'; return; }
+  if (!visitas.length) { tbody.innerHTML = '<tr><td colspan="8" class="loading">Sin visitas registradas</td></tr>'; return; }
 
   tbody.innerHTML = visitas.map(v => `
     <tr onclick="verDetalleVisita('${v.id}')" style="cursor:pointer;">
-      <td>${v.fecha}</td>
+      <td style="white-space:nowrap;">${v.fecha}</td>
       <td>${v.pdv?.nombre || '—'}</td>
       <td>${v.pdv?.cadena || '—'}</td>
-      <td>${v.hora_llegada || '—'}</td>
+      <td style="white-space:nowrap;">${v.hora_llegada || '—'}</td>
       <td>${badgeTipoVisita(v.tipo_visita)}</td>
       <td>${v.oc_emitida ? '<span class="badge badge-green">Sí</span>' : '<span class="badge badge-red">No</span>'}</td>
-      <td>${v.fecha_entrega || '—'}</td>
       <td style="max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${v.observaciones || '—'}</td>
-      <td>
+      <td style="white-space:nowrap;">
         <button class="btn btn-sm" onclick="event.stopPropagation(); editarVisita('${v.id}')">✏️</button>
         <button class="btn btn-sm btn-danger" onclick="event.stopPropagation(); eliminarVisita('${v.id}')">×</button>
       </td>
@@ -1260,7 +1258,16 @@ function openModalVisita(v = null) {
   document.getElementById('v-entrega').value = v?.fecha_entrega || '';
   document.getElementById('v-deposito').value = v?.mercancia_deposito ? 'true' : 'false';
   document.getElementById('v-obs').value = v?.observaciones || '';
+  toggleFechaEntregaVisita();
   document.getElementById('modal-visita').classList.add('open');
+}
+
+// La fecha de entrega prometida solo tiene sentido si hay OC emitida — igual que en
+// mercaderista.html, para que no se confunda con "la fecha en que recibo el pedido".
+function toggleFechaEntregaVisita() {
+  const hayOC = document.getElementById('v-oc').value === 'true';
+  document.getElementById('v-entrega-group').style.display = hayOC ? '' : 'none';
+  if (!hayOC) document.getElementById('v-entrega').value = '';
 }
 
 async function guardarVisita() {
