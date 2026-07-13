@@ -703,7 +703,7 @@ async function cargarEntregasPendientes() {
     const dia = DIAS[diff];
     if (!dia) return;
     state.days[dia].push({
-      id: e.id, kind: 'entrega',
+      id: e.id, kind: 'entrega', visita_id: e.visita_id,
       nombre: e.pdv?.nombre || '—', cadena: e.pdv?.cadena || '',
       fecha_entrega: e.fecha_entrega, orden: e.orden,
     });
@@ -866,7 +866,7 @@ function renderSemana() {
       chip.className = 'pdv-chip' + (isEntrega ? ' entrega-chip' : '');
       chip.draggable = true;
       chip.innerHTML = isEntrega
-        ? `<span class="pdv-seq">${idx+1}</span><span class="entrega-icon">🚚</span><span class="pdv-name">${pdv.nombre}<span class="entrega-tag">Entrega</span></span>`
+        ? `<span class="pdv-seq">${idx+1}</span><span class="entrega-icon">🚚</span><span class="pdv-name">${pdv.nombre}<span class="entrega-tag">Entrega</span></span><span class="pdv-remove" onclick="event.stopPropagation(); quitarEntrega('${pdv.id}','${pdv.visita_id}','${dia}')">×</span>`
         : `<span class="pdv-seq">${idx+1}</span><span class="pdv-name" title="Clic para agregar/editar instrucción" onclick="abrirNotaParada('${pdv._instanceId}','${dia}')">${pdv.nota ? '📋 ' : ''}${pdv.nombre}</span><span class="pdv-remove" onclick="quitarInstanciaDeDia('${pdv._instanceId}','${dia}')">×</span>`;
       chip.ondragstart = e => { drag = { item: pdv, from: dia, idx }; setTimeout(() => chip.classList.add('dragging'), 0); e.stopPropagation(); };
       chip.ondragend = () => chip.classList.remove('dragging');
@@ -921,6 +921,17 @@ function moverPDV(item, from, toDia, toIdx) {
 
 function quitarInstanciaDeDia(instanceId, dia) {
   state.days[dia] = state.days[dia].filter(p => p._instanceId !== instanceId);
+  renderSemana();
+}
+
+// Cancela la entrega comprometida: hay que borrar el registro en `entregas` Y quitarle
+// la OC/fecha a la visita, si no la proxima vez que el mercaderista guarde esa visita
+// se vuelve a crear sola (misma logica que sincronizarEntregaDeVisita).
+async function quitarEntrega(entregaId, visitaId, dia) {
+  if (!confirm('¿Quitar esta entrega pendiente? Se le quitará la OC y la fecha de entrega a la visita para que no vuelva a aparecer.')) return;
+  await sb.from('visitas').update({ oc_emitida: false, fecha_entrega: null }).eq('id', visitaId);
+  await sb.from('entregas').delete().eq('id', entregaId);
+  state.days[dia] = state.days[dia].filter(p => p.id !== entregaId);
   renderSemana();
 }
 
