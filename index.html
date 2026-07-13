@@ -411,7 +411,7 @@ tr:hover td { background: var(--bg); }
 <!-- MODAL VISITA -->
 <div class="modal-bg" id="modal-visita">
   <div class="modal">
-    <div class="modal-title">Registrar Visita</div>
+    <div class="modal-title" id="visita-modal-titulo">Registrar Visita</div>
     <input type="hidden" id="v-id">
     <div class="form-row cols-2">
       <div><label>Fecha</label><input type="date" id="v-fecha"></div>
@@ -1176,9 +1176,18 @@ async function cargarVisitas() {
       <td>${v.oc_emitida ? '<span class="badge badge-green">Sí</span>' : '<span class="badge badge-red">No</span>'}</td>
       <td>${v.fecha_entrega || '—'}</td>
       <td style="max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${v.observaciones || '—'}</td>
-      <td><button class="btn btn-sm btn-danger" onclick="event.stopPropagation(); eliminarVisita('${v.id}')">×</button></td>
+      <td>
+        <button class="btn btn-sm" onclick="event.stopPropagation(); editarVisita('${v.id}')">✏️</button>
+        <button class="btn btn-sm btn-danger" onclick="event.stopPropagation(); eliminarVisita('${v.id}')">×</button>
+      </td>
     </tr>
   `).join('');
+}
+
+async function editarVisita(id) {
+  const { data: v, error } = await sb.from('visitas').select('*').eq('id', id).single();
+  if (error || !v) { alert('No se pudo cargar la visita.'); return; }
+  openModalVisita(v);
 }
 
 async function verDetalleVisita(id) {
@@ -1230,6 +1239,7 @@ async function verDetalleVisita(id) {
 }
 
 function openModalVisita(v = null) {
+  document.getElementById('visita-modal-titulo').textContent = v ? 'Editar Visita' : 'Registrar Visita';
   document.getElementById('v-id').value = v?.id || '';
   document.getElementById('v-fecha').value = v?.fecha || fechaLocalISO(new Date());
   document.getElementById('v-pdv').value = v?.pdv_id || '';
@@ -1252,10 +1262,34 @@ async function guardarVisita() {
     observaciones: document.getElementById('v-obs').value || null,
   };
   const id = document.getElementById('v-id').value;
-  if (id) await sb.from('visitas').update(data).eq('id', id);
-  else await sb.from('visitas').insert(data);
+  let visitaId = id;
+  if (id) {
+    await sb.from('visitas').update(data).eq('id', id);
+  } else {
+    const { data: nueva } = await sb.from('visitas').insert(data).select().single();
+    visitaId = nueva?.id;
+  }
+  if (visitaId) await sincronizarEntregaDeVisita(visitaId, data.pdv_id, data);
   closeModal('modal-visita');
   cargarVisitas();
+}
+
+// Mantiene la tarjeta de entrega del planificador en sincronia con lo que el
+// admin corrija aca (misma logica de upsert/baja que usa mercaderista.html
+// al autoguardar), para que un error de fecha/OC se pueda arreglar desde la compu.
+async function sincronizarEntregaDeVisita(visitaId, pdvId, data) {
+  const { data: existentes } = await sb.from('entregas').select('id, confirmada').eq('visita_id', visitaId);
+  const entregaExistente = (existentes || [])[0];
+
+  if (data.oc_emitida && data.fecha_entrega) {
+    if (entregaExistente) {
+      await sb.from('entregas').update({ fecha_entrega: data.fecha_entrega }).eq('id', entregaExistente.id);
+    } else {
+      await sb.from('entregas').insert({ visita_id: visitaId, pdv_id: pdvId, fecha_entrega: data.fecha_entrega, confirmada: false });
+    }
+  } else if (entregaExistente && !entregaExistente.confirmada) {
+    await sb.from('entregas').delete().eq('id', entregaExistente.id);
+  }
 }
 
 async function eliminarVisita(id) {
