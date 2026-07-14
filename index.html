@@ -71,13 +71,14 @@ textarea { resize: vertical; min-height: 60px; }
 .pdv-chip:hover { border-color: var(--border); }
 .pdv-chip.dragging { opacity: 0.3; }
 .pdv-seq { font-size: 10px; font-weight: 700; color: var(--muted); min-width: 14px; }
-.pdv-name { flex: 1; cursor: pointer; }
-.pdv-remove { cursor: pointer; color: var(--muted); font-size: 14px; line-height: 1; }
+.pdv-name { flex: 1; cursor: pointer; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pdv-remove { cursor: pointer; color: var(--muted); font-size: 14px; line-height: 1; flex-shrink: 0; }
 .pdv-remove:hover { color: #dc2626; }
 .drop-hint { font-size: 11px; color: #ccc; text-align: center; padding: 16px 0; }
-.pdv-chip.entrega-chip { background: #FFF7ED; border: 1px solid #FDBA74; }
-.entrega-icon { font-size: 12px; }
-.entrega-tag { font-size: 9px; font-weight: 700; color: #9A3412; background: #FFEDD5; padding: 1px 6px; border-radius: 8px; margin-left: 6px; text-transform: uppercase; letter-spacing: 0.03em; }
+.pdv-chip.entrega-chip { background: #FFF7ED; border: 1px solid #FDBA74; flex-direction: column; align-items: stretch; gap: 2px; }
+.entrega-chip-row { display: flex; align-items: center; gap: 6px; }
+.entrega-icon { font-size: 12px; flex-shrink: 0; }
+.entrega-tag { font-size: 9px; font-weight: 700; color: #9A3412; background: #FFEDD5; padding: 1px 6px; border-radius: 8px; text-transform: uppercase; letter-spacing: 0.03em; flex-shrink: 0; align-self: flex-start; margin-left: 20px; }
 
 /* POOL */
 .pool-area { min-height: 44px; padding: 10px; background: var(--bg); border: 1px dashed var(--border); border-radius: 8px; margin-bottom: 16px; }
@@ -511,6 +512,31 @@ tr:hover td { background: var(--bg); }
   </div>
 </div>
 
+<!-- MODAL DETALLE DE ENTREGA -->
+<div class="modal-bg" id="modal-detalle-entrega">
+  <div class="modal">
+    <div class="modal-title" id="entrega-modal-titulo">🚚 Entrega comprometida</div>
+    <input type="hidden" id="entrega-id">
+    <input type="hidden" id="entrega-dia">
+    <div class="form-row">
+      <div>
+        <label>Fecha de entrega prometida</label>
+        <input type="date" id="entrega-fecha">
+      </div>
+    </div>
+    <div class="form-row">
+      <div>
+        <label>Observaciones</label>
+        <textarea id="entrega-obs" placeholder="Notas sobre esta entrega..."></textarea>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModal('modal-detalle-entrega')">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarDetalleEntrega()">Guardar</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL PRODUCTO -->
 <div class="modal-bg" id="modal-producto">
   <div class="modal">
@@ -704,7 +730,7 @@ async function cargarEntregasPendientes() {
     state.days[dia].push({
       id: e.id, kind: 'entrega', visita_id: e.visita_id,
       nombre: e.pdv?.nombre || '—', cadena: e.pdv?.cadena || '',
-      fecha_entrega: e.fecha_entrega, orden: e.orden,
+      fecha_entrega: e.fecha_entrega, orden: e.orden, observaciones: e.observaciones || null,
     });
   });
 
@@ -865,7 +891,7 @@ function renderSemana() {
       chip.className = 'pdv-chip' + (isEntrega ? ' entrega-chip' : '');
       chip.draggable = true;
       chip.innerHTML = isEntrega
-        ? `<span class="pdv-seq">${idx+1}</span><span class="entrega-icon">🚚</span><span class="pdv-name">${pdv.nombre}<span class="entrega-tag">Entrega</span></span><span class="pdv-remove" onclick="event.stopPropagation(); quitarEntrega('${pdv.id}','${pdv.visita_id}','${dia}')">×</span>`
+        ? `<div class="entrega-chip-row"><span class="pdv-seq">${idx+1}</span><span class="entrega-icon">🚚</span><span class="pdv-name" title="Clic para ver/editar la entrega" onclick="event.stopPropagation(); abrirDetalleEntrega('${pdv.id}','${dia}')">${pdv.nombre}</span><span class="pdv-remove" onclick="event.stopPropagation(); quitarEntrega('${pdv.id}','${pdv.visita_id}','${dia}')">×</span></div><span class="entrega-tag">Entrega</span>`
         : `<span class="pdv-seq">${idx+1}</span><span class="pdv-name" title="Clic para agregar/editar instrucción" onclick="abrirNotaParada('${pdv._instanceId}','${dia}')">${pdv.nota ? '📋 ' : ''}${pdv.nombre}</span><span class="pdv-remove" onclick="quitarInstanciaDeDia('${pdv._instanceId}','${dia}')">×</span>`;
       chip.ondragstart = e => { drag = { item: pdv, from: dia, idx }; setTimeout(() => chip.classList.add('dragging'), 0); e.stopPropagation(); };
       chip.ondragend = () => chip.classList.remove('dragging');
@@ -932,6 +958,30 @@ async function quitarEntrega(entregaId, visitaId, dia) {
   await sb.from('entregas').delete().eq('id', entregaId);
   state.days[dia] = state.days[dia].filter(p => p.id !== entregaId);
   renderSemana();
+}
+
+function abrirDetalleEntrega(entregaId, dia) {
+  const entrega = state.days[dia]?.find(p => p.id === entregaId);
+  if (!entrega) return;
+  document.getElementById('entrega-modal-titulo').textContent = `🚚 Entrega — ${entrega.nombre}`;
+  document.getElementById('entrega-id').value = entregaId;
+  document.getElementById('entrega-dia').value = dia;
+  document.getElementById('entrega-fecha').value = entrega.fecha_entrega || '';
+  document.getElementById('entrega-obs').value = entrega.observaciones || '';
+  document.getElementById('modal-detalle-entrega').classList.add('open');
+}
+
+async function guardarDetalleEntrega() {
+  const entregaId = document.getElementById('entrega-id').value;
+  const dia = document.getElementById('entrega-dia').value;
+  const fecha = document.getElementById('entrega-fecha').value;
+  const obs = document.getElementById('entrega-obs').value.trim();
+
+  const { error } = await sb.from('entregas').update({ fecha_entrega: fecha, observaciones: obs || null }).eq('id', entregaId);
+  if (error) { alert('Error al guardar: ' + error.message); return; }
+
+  closeModal('modal-detalle-entrega');
+  await cargarEntregasPendientes();
 }
 
 function abrirNotaParada(instanceId, dia) {
