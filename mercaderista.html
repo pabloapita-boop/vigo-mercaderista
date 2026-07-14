@@ -697,64 +697,77 @@ async function autoguardarVisita(pdvId, fechaDia) {
   const v = getLocal(pdvId, fechaDia);
   mostrarEstadoGuardado(pdvId, 'guardando');
 
+  // Todo el guardado va en un solo try/catch: una falla de red (conexion inestable en
+  // el punto de venta) lanza una excepcion en el await, no un {error} normal de Supabase —
+  // si no se captura aca, queda sin capturar y la visita nunca se guarda en la base aunque
+  // en pantalla parezca que si (el estado local del telefono si tiene los cambios).
   try {
     await asegurarVisitaId(pdvId, fechaDia);
+
+    const data = {
+      visitado: v.visitado || false,
+      tipo_visita: v.tipo_visita || 'mercadeo',
+      oc_emitida: v.oc_emitida || false,
+      fecha_entrega: v.oc_emitida ? (v.fecha_entrega || null) : null,
+      mercancia_deposito: v.mercancia_deposito || false,
+      observaciones: v.observaciones || null,
+      fotos: v.fotos || [],
+      hora_llegada: v.hora_llegada || null,
+    };
+
+    const { error } = await sb.from('visitas').update(data).eq('id', v.id);
+    if (error) throw error;
+
+    if (data.oc_emitida && data.fecha_entrega) {
+      const entregaPayload = { visita_id: v.id, pdv_id: pdvId, fecha_entrega: data.fecha_entrega, confirmada: false };
+      if (v.entrega_id) {
+        await sb.from('entregas').update(entregaPayload).eq('id', v.entrega_id);
+      } else {
+        const { data: insEntrega } = await sb.from('entregas').insert(entregaPayload).select().single();
+        if (insEntrega) v.entrega_id = insEntrega.id;
+      }
+    }
+
+    mostrarEstadoGuardado(pdvId, 'ok');
+    return true;
   } catch (e) {
     mostrarEstadoGuardado(pdvId, 'error');
     return false;
   }
-
-  const data = {
-    visitado: v.visitado || false,
-    tipo_visita: v.tipo_visita || 'mercadeo',
-    oc_emitida: v.oc_emitida || false,
-    fecha_entrega: v.oc_emitida ? (v.fecha_entrega || null) : null,
-    mercancia_deposito: v.mercancia_deposito || false,
-    observaciones: v.observaciones || null,
-    fotos: v.fotos || [],
-    hora_llegada: v.hora_llegada || null,
-  };
-
-  const { error } = await sb.from('visitas').update(data).eq('id', v.id);
-  if (error) { mostrarEstadoGuardado(pdvId, 'error'); return false; }
-
-  if (data.oc_emitida && data.fecha_entrega) {
-    const entregaPayload = { visita_id: v.id, pdv_id: pdvId, fecha_entrega: data.fecha_entrega, confirmada: false };
-    if (v.entrega_id) {
-      await sb.from('entregas').update(entregaPayload).eq('id', v.entrega_id);
-    } else {
-      const { data: insEntrega } = await sb.from('entregas').insert(entregaPayload).select().single();
-      if (insEntrega) v.entrega_id = insEntrega.id;
-    }
-  }
-
-  mostrarEstadoGuardado(pdvId, 'ok');
-  return true;
 }
 
 async function autoguardarInventario(pdvId, fechaDia) {
   const v = getLocal(pdvId, fechaDia);
   mostrarEstadoGuardado(pdvId, 'guardando');
 
+  // Mismo cuidado que autoguardarVisita: todo en un try/catch para no dejar una excepcion
+  // de red sin capturar. Ademas, se inserta el inventario nuevo y se confirma exito ANTES
+  // de borrar el anterior (nunca al reves), para no perder datos si el insert falla a mitad
+  // de camino por conexion inestable en el punto de venta.
   try {
     await asegurarVisitaId(pdvId, fechaDia);
+
+    const { data: anteriores } = await sb.from('visita_inventario').select('id').eq('visita_id', v.id);
+
+    if (v.inventario && v.inventario.length) {
+      const rows = v.inventario.map(it => ({
+        visita_id: v.id, pdv_id: pdvId, fecha: fechaDia,
+        producto_id: it.producto_id,
+        unidades_anaquel: it.unidades_anaquel || 0,
+        unidades_deposito: it.unidades_deposito || 0,
+      }));
+      const { error } = await sb.from('visita_inventario').insert(rows);
+      if (error) throw error;
+    }
+
+    if (anteriores?.length) {
+      await sb.from('visita_inventario').delete().in('id', anteriores.map(r => r.id));
+    }
+
+    mostrarEstadoGuardado(pdvId, 'ok');
   } catch (e) {
     mostrarEstadoGuardado(pdvId, 'error');
-    return;
   }
-
-  await sb.from('visita_inventario').delete().eq('visita_id', v.id);
-  let error;
-  if (v.inventario && v.inventario.length) {
-    const rows = v.inventario.map(it => ({
-      visita_id: v.id, pdv_id: pdvId, fecha: fechaDia,
-      producto_id: it.producto_id,
-      unidades_anaquel: it.unidades_anaquel || 0,
-      unidades_deposito: it.unidades_deposito || 0,
-    }));
-    ({ error } = await sb.from('visita_inventario').insert(rows));
-  }
-  mostrarEstadoGuardado(pdvId, error ? 'error' : 'ok');
 }
 
 function actualizarNumeracionTarjeta(pdvId) {
@@ -952,24 +965,29 @@ async function subirFoto(pdvId, fechaDia, input) {
   area.insertBefore(loading, area.querySelector('label'));
 
   const fileName = `${pdvId}/${Date.now()}.jpg`;
-  const { error } = await sb.storage.from('visita-fotos').upload(fileName, file, { upsert: true });
-  loading.remove();
-  if (error) { toast('Error al subir foto'); return; }
+  try {
+    const { error } = await sb.storage.from('visita-fotos').upload(fileName, file, { upsert: true });
+    if (error) throw error;
 
-  const { data: { publicUrl } } = sb.storage.from('visita-fotos').getPublicUrl(fileName);
-  const v = getLocal(pdvId, fechaDia);
-  if (!v.fotos) v.fotos = [];
-  v.fotos.push(publicUrl);
+    const { data: { publicUrl } } = sb.storage.from('visita-fotos').getPublicUrl(fileName);
+    const v = getLocal(pdvId, fechaDia);
+    if (!v.fotos) v.fotos = [];
+    v.fotos.push(publicUrl);
 
-  const img = document.createElement('img');
-  img.className = 'photo-thumb';
-  img.src = publicUrl;
-  img.onclick = () => window.open(publicUrl, '_blank');
-  area.insertBefore(img, area.querySelector('label'));
-  input.value = '';
+    const img = document.createElement('img');
+    img.className = 'photo-thumb';
+    img.src = publicUrl;
+    img.onclick = () => window.open(publicUrl, '_blank');
+    area.insertBefore(img, area.querySelector('label'));
+    input.value = '';
 
-  await autoguardarVisita(pdvId, fechaDia);
-  toast('Foto agregada ✓');
+    const guardado = await autoguardarVisita(pdvId, fechaDia);
+    toast(guardado ? 'Foto agregada ✓' : 'Foto subida, pero no se pudo guardar. Revisa tu conexión.');
+  } catch (e) {
+    toast('Error al subir foto. Revisa tu conexión e intenta de nuevo.');
+  } finally {
+    loading.remove();
+  }
 }
 
 async function subirFotoEntrega(entregaId, input) {
