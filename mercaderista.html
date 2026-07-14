@@ -358,15 +358,25 @@ async function cargarSemana(inicioISO) {
     .gte('fecha', fechaInicio)
     .lte('fecha', fechaFin);
 
+  // Mapear cada dia de la semana a su fecha real. Un PDV puede repetirse en varios dias
+  // (el planificador ya lo permite), asi que hay que emparejar cada visita con el dia por
+  // su propia fecha exacta -- si solo se buscara "el primer dia que tenga este pdv_id",
+  // todas las visitas de un PDV repetido caian siempre en ese primer dia, dejando los
+  // demas dias sin ver su visita ya guardada y creando una fila nueva en cada intento.
+  const fechaPorDia = {};
+  const baseSemana = new Date(fechaInicio + 'T12:00:00');
+  DIAS_RUTA.forEach((dia, i) => {
+    const f = new Date(baseSemana);
+    f.setDate(f.getDate() + i);
+    fechaPorDia[dia] = fechaLocalISO(f);
+  });
+
   const visitaIndex = {};
   visitas?.forEach(v => {
-    // Find which day this PDV belongs to
-    for (const dia of DIAS_RUTA) {
-      if (rutaItemsPorDia[dia].find(i => i.pdv_id === v.pdv_id)) {
-        visitasPorDia[dia][v.pdv_id] = v;
-        visitaIndex[v.id] = v;
-        break;
-      }
+    const dia = DIAS_RUTA.find(d => fechaPorDia[d] === v.fecha);
+    if (dia) {
+      visitasPorDia[dia][v.pdv_id] = v;
+      visitaIndex[v.id] = v;
     }
   });
 
